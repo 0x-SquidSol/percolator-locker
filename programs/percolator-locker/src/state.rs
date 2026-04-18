@@ -10,8 +10,8 @@ pub struct LockVault {
     pub vault_token_account: Pubkey,
     /// Total tokens currently locked across all users
     pub total_locked: u64,
-    /// Lock duration in seconds (default: 2,592,000 = 30 days)
-    pub lock_duration: i64,
+    /// Lock duration in seconds (default: 2,592,000 = 30 days) — cast to i64 for timestamp arithmetic
+    pub lock_duration: u64,
     /// Minimum tokens required for Bronze tier
     pub tier_bronze: u64,
     /// Minimum tokens required for Silver tier
