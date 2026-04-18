@@ -1,7 +1,53 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{Mint, Token, TokenAccount};
 
+use crate::error::LockerError;
 use crate::state::LockVault;
+
+/// Minimum allowed lock duration: 1 day in seconds
+pub(crate) const MIN_LOCK_DURATION: u64 = 86_400;
+
+/// Maximum allowed lock duration: 10 years in seconds (prevents u64 -> i64 cast overflow in timestamp math)
+pub(crate) const MAX_LOCK_DURATION: u64 = 315_360_000;
+
+pub fn handler(
+    ctx: Context<InitializeVault>,
+    lock_duration: u64,
+    tier_bronze: u64,
+    tier_silver: u64,
+    tier_gold: u64,
+) -> Result<()> {
+    // Validate lock duration bounds
+    require!(
+        lock_duration >= MIN_LOCK_DURATION,
+        LockerError::LockDurationTooShort
+    );
+    require!(
+        lock_duration <= MAX_LOCK_DURATION,
+        LockerError::LockDurationTooLong
+    );
+
+    // Validate tier thresholds: all positive and strictly ascending
+    require!(tier_bronze > 0, LockerError::InvalidTierThresholds);
+    require!(tier_silver > tier_bronze, LockerError::InvalidTierThresholds);
+    require!(tier_gold > tier_silver, LockerError::InvalidTierThresholds);
+
+    let vault = &mut ctx.accounts.vault;
+
+    vault.admin = ctx.accounts.admin.key();
+    vault.token_mint = ctx.accounts.token_mint.key();
+    vault.vault_token_account = ctx.accounts.vault_token_account.key();
+    vault.lock_duration = lock_duration;
+    vault.tier_bronze = tier_bronze;
+    vault.tier_silver = tier_silver;
+    vault.tier_gold = tier_gold;
+    vault.total_locked = 0;
+    vault.total_lockers = 0;
+    vault.token_decimals = ctx.accounts.token_mint.decimals;
+    vault.bump = ctx.bumps.vault;
+
+    Ok(())
+}
 
 #[derive(Accounts)]
 pub struct InitializeVault<'info> {

@@ -33,6 +33,9 @@ pub enum LockerError {
     #[msg("Lock duration must be at least the minimum allowed")]
     LockDurationTooShort,
 
+    #[msg("Lock duration exceeds the maximum allowed")]
+    LockDurationTooLong,
+
     // === Account mismatch errors ===
     #[msg("The lock position does not belong to this vault")]
     VaultMismatch,
