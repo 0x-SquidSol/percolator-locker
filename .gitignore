@@ -1,1 +1,29 @@
+# Private files
 PLAN.md
+
+# Environment / secrets
+.env
+.env.*
+
+# Solana keypairs
+*.keypair
+deploy-keypair.json
+id.json
+
+# Rust build artifacts
+target/
+
+# Node
+node_modules/
+
+# Anchor
+.anchor/
+test-ledger/
+
+# Logs
+*.log
+
+# IDE / OS
+.DS_Store
+Thumbs.db
+.vscode/
