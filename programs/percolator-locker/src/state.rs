@@ -50,6 +50,20 @@ pub struct LockVault {
 impl LockVault {
     /// Account size: 8 (discriminator) + 32 + 32 + 32 + 8 + 8 + 8 + 8 + 8 + 8 + 1 + 1 = 154
     pub const SIZE: usize = 8 + 32 + 32 + 32 + 8 + 8 + 8 + 8 + 8 + 8 + 1 + 1;
+
+    /// Classify a lock amount against this vault's tier thresholds.
+    /// Returns the highest tier the amount qualifies for.
+    pub fn calculate_tier(&self, amount: u64) -> Tier {
+        if amount >= self.tier_gold {
+            Tier::Gold
+        } else if amount >= self.tier_silver {
+            Tier::Silver
+        } else if amount >= self.tier_bronze {
+            Tier::Bronze
+        } else {
+            Tier::None
+        }
+    }
 }
 
 #[account]
