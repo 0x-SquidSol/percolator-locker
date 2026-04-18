@@ -7,8 +7,12 @@ PLAN.md
 
 # Solana keypairs
 *.keypair
+*-keypair.json
+*-key.json
 deploy-keypair.json
 id.json
+wallet.json
+authority.json
 
 # Rust build artifacts
 target/

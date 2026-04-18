@@ -3,3 +3,6 @@ members = [
     "programs/percolator-locker"
 ]
 resolver = "2"
+
+[profile.release]
+overflow-checks = true
