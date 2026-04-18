@@ -1,5 +1,26 @@
 use anchor_lang::prelude::*;
 
+/// Fee-discount tier earned by completing a lock cycle.
+///
+/// Wire format is a single byte (Borsh variant index), so this is drop-in
+/// compatible with the previous `u8` representation. `None` is ordered first
+/// so zero-init (Anchor's default for freshly-created accounts) decodes to
+/// `Tier::None` without special handling.
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
+pub enum Tier {
+    None = 0,
+    Bronze = 1,
+    Silver = 2,
+    Gold = 3,
+}
+
+impl Default for Tier {
+    fn default() -> Self {
+        Tier::None
+    }
+}
+
 #[account]
 pub struct LockVault {
     /// Program admin — can update tier thresholds and lock duration
@@ -46,7 +67,7 @@ pub struct LockPosition {
     /// Unix timestamp when earned discount expires
     pub discount_end: i64,
     /// Earned tier (persists after unlock so the matcher can read it)
-    pub tier: u8,
+    pub tier: Tier,
     /// Whether the lock is currently active
     pub is_active: bool,
     /// PDA bump seed
