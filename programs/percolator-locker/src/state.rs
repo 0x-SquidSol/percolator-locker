@@ -20,13 +20,15 @@ pub struct LockVault {
     pub tier_gold: u64,
     /// Number of active lock positions
     pub total_lockers: u64,
+    /// Token decimals (read from mint at initialization for display/validation)
+    pub token_decimals: u8,
     /// PDA bump seed
     pub bump: u8,
 }
 
 impl LockVault {
-    /// Account size: 8 (discriminator) + 32 + 32 + 32 + 8 + 8 + 8 + 8 + 8 + 8 + 1 = 153
-    pub const SIZE: usize = 8 + 32 + 32 + 32 + 8 + 8 + 8 + 8 + 8 + 8 + 1;
+    /// Account size: 8 (discriminator) + 32 + 32 + 32 + 8 + 8 + 8 + 8 + 8 + 8 + 1 + 1 = 154
+    pub const SIZE: usize = 8 + 32 + 32 + 32 + 8 + 8 + 8 + 8 + 8 + 8 + 1 + 1;
 }
 
 #[account]
