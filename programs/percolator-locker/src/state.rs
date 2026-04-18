@@ -28,3 +28,30 @@ impl LockVault {
     /// Account size: 8 (discriminator) + 32 + 32 + 32 + 8 + 8 + 8 + 8 + 8 + 8 + 1 = 153
     pub const SIZE: usize = 8 + 32 + 32 + 32 + 8 + 8 + 8 + 8 + 8 + 8 + 1;
 }
+
+#[account]
+pub struct LockPosition {
+    /// The user who locked tokens
+    pub owner: Pubkey,
+    /// Which vault this position belongs to
+    pub vault: Pubkey,
+    /// Number of tokens locked (0 after unlock)
+    pub amount: u64,
+    /// Unix timestamp when tokens were locked
+    pub lock_start: i64,
+    /// Unix timestamp when tokens become unlockable
+    pub lock_end: i64,
+    /// Unix timestamp when earned discount expires
+    pub discount_end: i64,
+    /// Earned tier (persists after unlock so the matcher can read it)
+    pub tier: u8,
+    /// Whether the lock is currently active
+    pub is_active: bool,
+    /// PDA bump seed
+    pub bump: u8,
+}
+
+impl LockPosition {
+    /// Account size: 8 (discriminator) + 32 + 32 + 8 + 8 + 8 + 8 + 1 + 1 + 1 = 107
+    pub const SIZE: usize = 8 + 32 + 32 + 8 + 8 + 8 + 8 + 1 + 1 + 1;
+}
