@@ -7,8 +7,8 @@ use crate::state::LockVault;
 /// Minimum allowed lock duration: 1 day in seconds
 pub(crate) const MIN_LOCK_DURATION: u64 = 86_400;
 
-/// Maximum allowed lock duration: 10 years in seconds (prevents u64 -> i64 cast overflow in timestamp math)
-pub(crate) const MAX_LOCK_DURATION: u64 = 315_360_000;
+/// Maximum allowed lock duration: 1 year in seconds (prevents unreasonable lock periods)
+pub(crate) const MAX_LOCK_DURATION: u64 = 31_536_000;
 
 pub fn handler(
     ctx: Context<InitializeVault>,
