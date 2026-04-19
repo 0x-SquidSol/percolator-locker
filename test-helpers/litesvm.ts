@@ -52,6 +52,15 @@ export function makeHarness(): LiteSVMHarness {
  * the primitive that makes time-based handler guards testable —
  * `require!(now >= lock_end)` in unlock, `require!(now >= lock_end)` in
  * refresh_lock, `discount_end > now` in any matcher-adjacent assertion.
+ *
+ * WARNING: on-chain, slot advances roughly monotonically with wall-clock
+ * time (~0.4 s per slot). This helper leaves slot at its pre-warp value
+ * while unix_timestamp can jump arbitrarily far forward — producing a
+ * (slot, unix_timestamp) pair no real validator would ever present. Any
+ * handler that reads `Clock::slot` alongside `Clock::unix_timestamp` (or
+ * any time-correlated pair) will pass a warp-based test while failing on
+ * mainnet. Extend this helper to a slot-aware variant before the first
+ * such handler lands.
  */
 export function warpTo(svm: LiteSVM, targetUnixTs: bigint): void {
   const before = svm.getClock();
