@@ -1,5 +1,5 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer};
+use anchor_spl::token::{self, Mint, Token, TokenAccount, TransferChecked};
 
 use crate::constants::LOCK_POSITION_SEED;
 use crate::error::LockerError;
@@ -36,16 +36,20 @@ pub fn handler(ctx: Context<Lock>, amount: u64) -> Result<()> {
 
     // Move tokens: user_token_account -> vault_token_account. SPL Token enforces balance
     // and authority checks; on failure the whole transaction rolls back atomically.
-    token::transfer(
+    // transfer_checked revalidates the mint + decimals on every transfer, catching
+    // account-substitution bugs that plain `transfer` would let through.
+    token::transfer_checked(
         CpiContext::new(
             ctx.accounts.token_program.to_account_info(),
-            Transfer {
+            TransferChecked {
                 from: ctx.accounts.user_token_account.to_account_info(),
+                mint: ctx.accounts.token_mint.to_account_info(),
                 to: ctx.accounts.vault_token_account.to_account_info(),
                 authority: ctx.accounts.user.to_account_info(),
             },
         ),
         amount,
+        ctx.accounts.vault.token_decimals,
     )?;
 
     // Cache pubkeys for both the LockPosition write and the event emit.

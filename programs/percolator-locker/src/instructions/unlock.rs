@@ -1,5 +1,5 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer};
+use anchor_spl::token::{self, Mint, Token, TokenAccount, TransferChecked};
 
 use crate::constants::{LOCK_POSITION_SEED, LOCK_VAULT_SEED};
 use crate::error::LockerError;
@@ -32,6 +32,7 @@ pub fn handler(ctx: Context<Unlock>) -> Result<()> {
     let vault_key = ctx.accounts.vault.key();
     let vault_admin = ctx.accounts.vault.admin;
     let vault_bump = ctx.accounts.vault.bump;
+    let vault_decimals = ctx.accounts.vault.token_decimals;
     let tier = ctx.accounts.lock_position.tier;
     let lock_start = ctx.accounts.lock_position.lock_start;
     let lock_end = ctx.accounts.lock_position.lock_end;
@@ -40,22 +41,26 @@ pub fn handler(ctx: Context<Unlock>) -> Result<()> {
     // Move tokens vault -> user via SPL Token CPI. The vault PDA is the
     // authority on vault_token_account (pinned at initialize_vault time), so
     // we sign as that PDA using its stored seeds + canonical bump.
+    // transfer_checked revalidates mint + decimals on every transfer — belt-and-
+    // suspenders protection on top of the accounts-struct `token::mint` pins.
     let signer_seeds: &[&[&[u8]]] = &[&[
         LOCK_VAULT_SEED,
         vault_admin.as_ref(),
         &[vault_bump],
     ]];
-    token::transfer(
+    token::transfer_checked(
         CpiContext::new_with_signer(
             ctx.accounts.token_program.to_account_info(),
-            Transfer {
+            TransferChecked {
                 from: ctx.accounts.vault_token_account.to_account_info(),
+                mint: ctx.accounts.token_mint.to_account_info(),
                 to: ctx.accounts.user_token_account.to_account_info(),
                 authority: ctx.accounts.vault.to_account_info(),
             },
             signer_seeds,
         ),
         amount,
+        vault_decimals,
     )?;
 
     // Retire the position: zero the amount, flip the flag. Keep tier,
