@@ -494,6 +494,11 @@ describe("percolator-locker", () => {
       assert.deepStrictEqual(position.tier, { bronze: {} }, "tier should be Bronze");
       assert.strictEqual(position.isActive, true, "is_active should be true");
       assert.strictEqual(position.bump, expectedBump, "bump mismatch");
+      assert.strictEqual(
+        position.cycleDuration.toNumber(),
+        DEFAULT_LOCK_DURATION,
+        "cycle_duration should be snapshotted from vault.lock_duration at lock time"
+      );
 
       // Vault counters incremented
       const vault = await program.account.lockVault.fetch(vaultPda);
@@ -531,6 +536,11 @@ describe("percolator-locker", () => {
         emittedEvent.discountEnd.toNumber(),
         position.discountEnd.toNumber(),
         "event.discount_end mismatch"
+      );
+      assert.strictEqual(
+        emittedEvent.cycleDuration.toNumber(),
+        DEFAULT_LOCK_DURATION,
+        "event.cycle_duration mismatch"
       );
     });
 

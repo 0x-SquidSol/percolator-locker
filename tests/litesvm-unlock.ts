@@ -319,6 +319,11 @@ describe("unlock (litesvm)", () => {
       positionBefore.bump,
       "bump preserved"
     );
+    assert.strictEqual(
+      positionAfter.cycleDuration.toNumber(),
+      positionBefore.cycleDuration.toNumber(),
+      "cycle_duration preserved"
+    );
 
     // --- Earned-discount runway is still non-empty right after unlock ---
     const nowAfter = Number(svm.getClock().unixTimestamp);
@@ -473,6 +478,11 @@ describe("unlock (litesvm)", () => {
       positionBAfter.discountEnd.toNumber(),
       positionBBefore.discountEnd.toNumber(),
       "user B's discount_end unchanged"
+    );
+    assert.strictEqual(
+      positionBAfter.cycleDuration.toNumber(),
+      positionBBefore.cycleDuration.toNumber(),
+      "user B's cycle_duration unchanged"
     );
 
     // B's token balance hasn't moved either — A's unlock must not transfer

@@ -22,7 +22,8 @@ pub fn handler(ctx: Context<Lock>, amount: u64) -> Result<()> {
     // Timestamps come from the on-chain clock, never from user input.
     // i64 arithmetic via checked_add guards against overflow at extreme lock_duration values.
     let now = Clock::get()?.unix_timestamp;
-    let lock_duration = i64::try_from(ctx.accounts.vault.lock_duration)
+    let cycle_duration = ctx.accounts.vault.lock_duration;
+    let lock_duration = i64::try_from(cycle_duration)
         .map_err(|_| error!(LockerError::ArithmeticOverflow))?;
     let lock_end = now
         .checked_add(lock_duration)
@@ -69,6 +70,10 @@ pub fn handler(ctx: Context<Lock>, amount: u64) -> Result<()> {
     lock_position.tier = tier;
     lock_position.is_active = true;
     lock_position.bump = position_bump;
+    // Snapshot the vault's current lock_duration onto the position. refresh_lock
+    // reads THIS value, not the vault's live duration, so admin config changes
+    // can never retroactively extend an existing locker's commitment.
+    lock_position.cycle_duration = cycle_duration;
 
     // Update aggregate counters with checked math.
     let vault = &mut ctx.accounts.vault;
@@ -89,6 +94,7 @@ pub fn handler(ctx: Context<Lock>, amount: u64) -> Result<()> {
         lock_start: now,
         lock_end,
         discount_end,
+        cycle_duration,
     });
 
     Ok(())
@@ -103,6 +109,10 @@ pub struct Locked {
     pub lock_start: i64,
     pub lock_end: i64,
     pub discount_end: i64,
+    /// Cycle duration (seconds) snapshotted from `vault.lock_duration` at lock
+    /// time. Emitted on the event so indexers can reconstruct `refresh_lock`
+    /// math without re-reading vault state.
+    pub cycle_duration: u64,
 }
 
 #[derive(Accounts)]

@@ -91,9 +91,18 @@ pub struct LockPosition {
     pub is_active: bool,
     /// PDA bump seed
     pub bump: u8,
+    /// Cycle duration in seconds, snapshotted from `vault.lock_duration` at lock time.
+    /// `refresh_lock` reads THIS value, not the vault's current `lock_duration`, so a
+    /// later `update_config` that changes the vault's duration cannot retroactively
+    /// extend an existing position's commitment without user consent. Immutable for
+    /// the life of the position; never re-written by `refresh_lock` or `unlock`.
+    /// Placed at the end of the struct so adding it does not shift the byte offsets
+    /// of any existing field — keeps downstream byte-layout decoders
+    /// (`percolator-match`, indexers) unaffected for fields they already read.
+    pub cycle_duration: u64,
 }
 
 impl LockPosition {
-    /// Account size: 8 (discriminator) + 32 + 32 + 8 + 8 + 8 + 8 + 1 + 1 + 1 = 107
-    pub const SIZE: usize = 8 + 32 + 32 + 8 + 8 + 8 + 8 + 1 + 1 + 1;
+    /// Account size: 8 (discriminator) + 32 + 32 + 8 + 8 + 8 + 8 + 1 + 1 + 1 + 8 = 115
+    pub const SIZE: usize = 8 + 32 + 32 + 8 + 8 + 8 + 8 + 1 + 1 + 1 + 8;
 }
