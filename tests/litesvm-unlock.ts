@@ -28,6 +28,7 @@ const DEFAULT_BRONZE = 500_000;
 const DEFAULT_SILVER = 1_000_000;
 const DEFAULT_GOLD = 5_000_000;
 const DECIMALS = 6;
+const USER_STARTING_BALANCE = 20_000_000;
 
 describe("unlock (litesvm)", () => {
   // === Setup helpers ===
@@ -204,7 +205,7 @@ describe("unlock (litesvm)", () => {
       provider,
       mint,
       admin,
-      20_000_000
+      USER_STARTING_BALANCE
     );
 
     // Lock at exactly Bronze
@@ -379,14 +380,14 @@ describe("unlock (litesvm)", () => {
       provider,
       mint,
       admin,
-      20_000_000
+      USER_STARTING_BALANCE
     );
     const { user: userB, userTokenAccount: taB } = await setupUser(
       svm,
       provider,
       mint,
       admin,
-      20_000_000
+      USER_STARTING_BALANCE
     );
 
     const amountA = DEFAULT_BRONZE;
@@ -496,7 +497,7 @@ describe("unlock (litesvm)", () => {
       provider,
       mint,
       admin,
-      20_000_000
+      USER_STARTING_BALANCE
     );
 
     // Lock, but do NOT warp the clock. The handler's `now >= lock_end` guard
@@ -542,21 +543,17 @@ describe("unlock (litesvm)", () => {
       provider,
       mint,
       admin,
-      20_000_000
+      USER_STARTING_BALANCE
     );
     const { user: userB, userTokenAccount: taB } = await setupUser(
       svm,
       provider,
       mint,
       admin,
-      20_000_000
+      USER_STARTING_BALANCE
     );
 
-    const [aLockPositionPda] = PublicKey.findProgramAddressSync(
-      [LOCK_POSITION_SEED, vaultPda.toBuffer(), userA.publicKey.toBuffer()],
-      program.programId
-    );
-    await lockTokens(
+    const aLockPositionPda = await lockTokens(
       program,
       userA,
       vaultPda,
@@ -609,7 +606,7 @@ describe("unlock (litesvm)", () => {
       provider,
       mint,
       admin,
-      20_000_000
+      USER_STARTING_BALANCE
     );
 
     const lockPositionPda = await lockTokens(
