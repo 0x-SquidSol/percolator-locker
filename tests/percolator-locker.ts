@@ -148,6 +148,73 @@ describe("percolator-locker", () => {
     };
   }
 
+  /**
+   * Create a funded user keypair with a token account that already holds `amount` of the mint.
+   * `mintAuthority` is the keypair that owns mint authority (typically the admin keypair from setupAdmin).
+   */
+  async function setupUser(
+    mint: PublicKey,
+    mintAuthority: Keypair,
+    amount: number | bigint = 20_000_000
+  ): Promise<{ user: Keypair; userTokenAccount: PublicKey }> {
+    const user = Keypair.generate();
+    await airdrop(user.publicKey);
+    const userTokenAccount = await createAccount(
+      connection,
+      mintAuthority,
+      mint,
+      user.publicKey,
+      undefined,
+      { commitment: "confirmed" }
+    );
+    await mintTo(
+      connection,
+      mintAuthority,
+      mint,
+      userTokenAccount,
+      mintAuthority,
+      amount,
+      [],
+      { commitment: "confirmed" }
+    );
+    return { user, userTokenAccount };
+  }
+
+  /**
+   * Call the `lock` instruction with explicit accounts and the user signer. Returns the
+   * derived LockPosition PDA so tests can fetch it afterwards.
+   */
+  async function lockTokens(opts: {
+    user: Keypair;
+    vault: PublicKey;
+    vaultTokenAccount: PublicKey;
+    userTokenAccount: PublicKey;
+    mint: PublicKey;
+    amount: number | BN;
+  }): Promise<PublicKey> {
+    const [lockPositionPda] = deriveLockPositionPda(
+      opts.vault,
+      opts.user.publicKey
+    );
+    const amountBn =
+      opts.amount instanceof BN ? opts.amount : new BN(opts.amount);
+    await program.methods
+      .lock(amountBn)
+      .accountsStrict({
+        user: opts.user.publicKey,
+        vault: opts.vault,
+        lockPosition: lockPositionPda,
+        userTokenAccount: opts.userTokenAccount,
+        vaultTokenAccount: opts.vaultTokenAccount,
+        tokenMint: opts.mint,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([opts.user])
+      .rpc({ commitment: "confirmed" });
+    return lockPositionPda;
+  }
+
   describe("initialize_vault", () => {
     it("creates a vault with valid inputs", async () => {
       const { admin, mint } = await setupAdmin();
@@ -337,6 +404,249 @@ describe("percolator-locker", () => {
           err.error?.errorCode?.code,
           "InvalidTierThresholds",
           `expected InvalidTierThresholds, got: ${err?.toString?.() ?? err}`
+        );
+      }
+    });
+  });
+
+  describe("lock", () => {
+    it("locks tokens at the Bronze threshold with full state assertions", async () => {
+      const { admin, mint } = await setupAdmin();
+      const { vaultPda, vaultTokenAccount } = await initVault(admin, mint);
+      const { user, userTokenAccount } = await setupUser(mint, admin);
+      const amount = DEFAULT_BRONZE;
+
+      const userBefore = await getAccount(
+        connection,
+        userTokenAccount,
+        "confirmed"
+      );
+      const vaultTaBefore = await getAccount(
+        connection,
+        vaultTokenAccount,
+        "confirmed"
+      );
+
+      // Listen for the Locked event emitted by the handler
+      const eventPromise = new Promise<any>((resolve) => {
+        const listener = program.addEventListener("locked", (event) => {
+          program.removeEventListener(listener);
+          resolve(event);
+        });
+        setTimeout(() => resolve(null), 5000);
+      });
+
+      const preTxTime = Math.floor(Date.now() / 1000);
+      const lockPositionPda = await lockTokens({
+        user,
+        vault: vaultPda,
+        vaultTokenAccount,
+        userTokenAccount,
+        mint,
+        amount,
+      });
+      const postTxTime = Math.floor(Date.now() / 1000);
+      const emittedEvent = await eventPromise;
+
+      // Token balances moved
+      const userAfter = await getAccount(
+        connection,
+        userTokenAccount,
+        "confirmed"
+      );
+      const vaultTaAfter = await getAccount(
+        connection,
+        vaultTokenAccount,
+        "confirmed"
+      );
+      assert.strictEqual(
+        Number(userAfter.amount),
+        Number(userBefore.amount) - amount,
+        "user token balance did not decrease by amount"
+      );
+      assert.strictEqual(
+        Number(vaultTaAfter.amount),
+        Number(vaultTaBefore.amount) + amount,
+        "vault token account balance did not increase by amount"
+      );
+
+      // LockPosition fields all populated correctly
+      const position = await program.account.lockPosition.fetch(lockPositionPda);
+      const [, expectedBump] = deriveLockPositionPda(vaultPda, user.publicKey);
+      assert.ok(position.owner.equals(user.publicKey), "owner mismatch");
+      assert.ok(position.vault.equals(vaultPda), "vault mismatch");
+      assert.strictEqual(position.amount.toNumber(), amount, "amount mismatch");
+      assert.ok(
+        position.lockStart.toNumber() >= preTxTime - 2 &&
+          position.lockStart.toNumber() <= postTxTime + 2,
+        `lock_start ${position.lockStart.toNumber()} not within [${preTxTime - 2}, ${postTxTime + 2}]`
+      );
+      assert.strictEqual(
+        position.lockEnd.toNumber(),
+        position.lockStart.toNumber() + DEFAULT_LOCK_DURATION,
+        "lock_end should be lock_start + lock_duration"
+      );
+      assert.strictEqual(
+        position.discountEnd.toNumber(),
+        position.lockEnd.toNumber() + DEFAULT_LOCK_DURATION,
+        "discount_end should be lock_end + lock_duration"
+      );
+      assert.deepStrictEqual(position.tier, { bronze: {} }, "tier should be Bronze");
+      assert.strictEqual(position.isActive, true, "is_active should be true");
+      assert.strictEqual(position.bump, expectedBump, "bump mismatch");
+
+      // Vault counters incremented
+      const vault = await program.account.lockVault.fetch(vaultPda);
+      assert.strictEqual(vault.totalLocked.toNumber(), amount, "total_locked mismatch");
+      assert.strictEqual(vault.totalLockers.toNumber(), 1, "total_lockers mismatch");
+
+      // Locked event emitted with matching fields
+      assert.ok(emittedEvent !== null, "Locked event was not emitted");
+      assert.ok(
+        emittedEvent.user.equals(user.publicKey),
+        "event.user mismatch"
+      );
+      assert.ok(emittedEvent.vault.equals(vaultPda), "event.vault mismatch");
+      assert.strictEqual(
+        emittedEvent.amount.toNumber(),
+        amount,
+        "event.amount mismatch"
+      );
+      assert.deepStrictEqual(
+        emittedEvent.tier,
+        { bronze: {} },
+        "event.tier mismatch"
+      );
+      assert.strictEqual(
+        emittedEvent.lockStart.toNumber(),
+        position.lockStart.toNumber(),
+        "event.lock_start mismatch"
+      );
+      assert.strictEqual(
+        emittedEvent.lockEnd.toNumber(),
+        position.lockEnd.toNumber(),
+        "event.lock_end mismatch"
+      );
+      assert.strictEqual(
+        emittedEvent.discountEnd.toNumber(),
+        position.discountEnd.toNumber(),
+        "event.discount_end mismatch"
+      );
+    });
+
+    // Walk every edge in the calculate_tier if-else ladder
+    const TIER_CASES: Array<{
+      amount: number;
+      expectedTier: "bronze" | "silver" | "gold";
+      label: string;
+    }> = [
+      { amount: 750_000, expectedTier: "bronze", label: "between Bronze and Silver" },
+      { amount: DEFAULT_SILVER, expectedTier: "silver", label: "exactly Silver" },
+      { amount: 2_500_000, expectedTier: "silver", label: "between Silver and Gold" },
+      { amount: DEFAULT_GOLD, expectedTier: "gold", label: "exactly Gold" },
+      { amount: DEFAULT_GOLD * 2, expectedTier: "gold", label: "above Gold" },
+    ];
+
+    for (const { amount, expectedTier, label } of TIER_CASES) {
+      it(`classifies ${amount.toLocaleString()} as ${expectedTier} (${label})`, async () => {
+        const { admin, mint } = await setupAdmin();
+        const { vaultPda, vaultTokenAccount } = await initVault(admin, mint);
+        const { user, userTokenAccount } = await setupUser(mint, admin);
+        const lockPositionPda = await lockTokens({
+          user,
+          vault: vaultPda,
+          vaultTokenAccount,
+          userTokenAccount,
+          mint,
+          amount,
+        });
+        const position = await program.account.lockPosition.fetch(lockPositionPda);
+        assert.deepStrictEqual(position.tier, { [expectedTier]: {} });
+        assert.strictEqual(position.amount.toNumber(), amount);
+      });
+    }
+
+    it("accumulates total_locked and total_lockers across multiple users", async () => {
+      const { admin, mint } = await setupAdmin();
+      const { vaultPda, vaultTokenAccount } = await initVault(admin, mint);
+      const { user: userA, userTokenAccount: taA } = await setupUser(mint, admin);
+      const { user: userB, userTokenAccount: taB } = await setupUser(mint, admin);
+
+      const amountA = DEFAULT_BRONZE;
+      const amountB = DEFAULT_SILVER;
+
+      await lockTokens({
+        user: userA,
+        vault: vaultPda,
+        vaultTokenAccount,
+        userTokenAccount: taA,
+        mint,
+        amount: amountA,
+      });
+      await lockTokens({
+        user: userB,
+        vault: vaultPda,
+        vaultTokenAccount,
+        userTokenAccount: taB,
+        mint,
+        amount: amountB,
+      });
+
+      const vault = await program.account.lockVault.fetch(vaultPda);
+      assert.strictEqual(
+        vault.totalLocked.toNumber(),
+        amountA + amountB,
+        "total_locked should be the sum of both locks"
+      );
+      assert.strictEqual(
+        vault.totalLockers.toNumber(),
+        2,
+        "total_lockers should be 2"
+      );
+    });
+
+    it("rejects amount = 0 (InvalidAmount)", async () => {
+      const { admin, mint } = await setupAdmin();
+      const { vaultPda, vaultTokenAccount } = await initVault(admin, mint);
+      const { user, userTokenAccount } = await setupUser(mint, admin);
+      try {
+        await lockTokens({
+          user,
+          vault: vaultPda,
+          vaultTokenAccount,
+          userTokenAccount,
+          mint,
+          amount: 0,
+        });
+        assert.fail("expected InvalidAmount");
+      } catch (err: any) {
+        assert.strictEqual(
+          err.error?.errorCode?.code,
+          "InvalidAmount",
+          `expected InvalidAmount, got: ${err?.toString?.() ?? err}`
+        );
+      }
+    });
+
+    it("rejects amount below Bronze threshold (BelowMinimumTier)", async () => {
+      const { admin, mint } = await setupAdmin();
+      const { vaultPda, vaultTokenAccount } = await initVault(admin, mint);
+      const { user, userTokenAccount } = await setupUser(mint, admin);
+      try {
+        await lockTokens({
+          user,
+          vault: vaultPda,
+          vaultTokenAccount,
+          userTokenAccount,
+          mint,
+          amount: DEFAULT_BRONZE - 1,
+        });
+        assert.fail("expected BelowMinimumTier");
+      } catch (err: any) {
+        assert.strictEqual(
+          err.error?.errorCode?.code,
+          "BelowMinimumTier",
+          `expected BelowMinimumTier, got: ${err?.toString?.() ?? err}`
         );
       }
     });
