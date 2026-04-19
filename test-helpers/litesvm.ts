@@ -1,4 +1,4 @@
-import { LiteSVM } from "litesvm";
+import { LiteSVM, Clock } from "litesvm";
 import { LiteSVMProvider } from "anchor-litesvm";
 import { Program } from "@coral-xyz/anchor";
 import { PublicKey } from "@solana/web3.js";
@@ -44,4 +44,24 @@ export function makeHarness(): LiteSVMHarness {
   );
 
   return { svm, provider, program, programId };
+}
+
+/**
+ * Advance LiteSVM's Clock sysvar to the given unix timestamp, leaving slot,
+ * epoch, epochStartTimestamp, and leaderScheduleEpoch unchanged. This is
+ * the primitive that makes time-based handler guards testable —
+ * `require!(now >= lock_end)` in unlock, `require!(now >= lock_end)` in
+ * refresh_lock, `discount_end > now` in any matcher-adjacent assertion.
+ */
+export function warpTo(svm: LiteSVM, targetUnixTs: bigint): void {
+  const before = svm.getClock();
+  svm.setClock(
+    new Clock(
+      before.slot,
+      before.epochStartTimestamp,
+      before.epoch,
+      before.leaderScheduleEpoch,
+      targetUnixTs
+    )
+  );
 }
