@@ -33,6 +33,7 @@ pub fn handler(ctx: Context<Unlock>) -> Result<()> {
     let vault_admin = ctx.accounts.vault.admin;
     let vault_bump = ctx.accounts.vault.bump;
     let tier = ctx.accounts.lock_position.tier;
+    let lock_start = ctx.accounts.lock_position.lock_start;
     let lock_end = ctx.accounts.lock_position.lock_end;
     let discount_end = ctx.accounts.lock_position.discount_end;
 
@@ -82,6 +83,7 @@ pub fn handler(ctx: Context<Unlock>) -> Result<()> {
         vault: vault_key,
         amount,
         tier,
+        lock_start,
         lock_end,
         discount_end,
     });
@@ -95,6 +97,7 @@ pub struct Unlocked {
     pub vault: Pubkey,
     pub amount: u64,
     pub tier: Tier,
+    pub lock_start: i64,
     pub lock_end: i64,
     pub discount_end: i64,
 }
