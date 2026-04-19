@@ -650,5 +650,139 @@ describe("percolator-locker", () => {
         );
       }
     });
+
+    it("rejects a second lock while the user already has an active position", async () => {
+      const { admin, mint } = await setupAdmin();
+      const { vaultPda, vaultTokenAccount } = await initVault(admin, mint);
+      const { user, userTokenAccount } = await setupUser(mint, admin);
+
+      // First lock succeeds
+      const firstAmount = DEFAULT_BRONZE;
+      const lockPositionPda = await lockTokens({
+        user,
+        vault: vaultPda,
+        vaultTokenAccount,
+        userTokenAccount,
+        mint,
+        amount: firstAmount,
+      });
+
+      // Second lock attempt against the same (vault, user) PDA must fail — the
+      // `init` constraint rejects at the system level when the account exists.
+      try {
+        await lockTokens({
+          user,
+          vault: vaultPda,
+          vaultTokenAccount,
+          userTokenAccount,
+          mint,
+          amount: 750_000,
+        });
+        assert.fail("expected second lock to fail");
+      } catch (err: any) {
+        const msg = err?.toString?.() ?? String(err);
+        assert.match(
+          msg,
+          /already in use|already initialized/i,
+          `unexpected error: ${msg}`
+        );
+      }
+
+      // Verify the first lock's state was not clobbered by the failed second attempt
+      const position = await program.account.lockPosition.fetch(lockPositionPda);
+      assert.strictEqual(
+        position.amount.toNumber(),
+        firstAmount,
+        "original lock amount should be unchanged after failed second lock"
+      );
+      assert.strictEqual(
+        position.isActive,
+        true,
+        "original lock should still be active"
+      );
+    });
+
+    it("rejects locking more tokens than the user's wallet holds", async () => {
+      const { admin, mint } = await setupAdmin();
+      const { vaultPda, vaultTokenAccount } = await initVault(admin, mint);
+      // User gets a balance just above the Bronze threshold so we can lock a
+      // valid-on-paper amount (passes the BelowMinimumTier check) that exceeds balance
+      const walletBalance = 600_000;
+      const { user, userTokenAccount } = await setupUser(
+        mint,
+        admin,
+        walletBalance
+      );
+
+      try {
+        await lockTokens({
+          user,
+          vault: vaultPda,
+          vaultTokenAccount,
+          userTokenAccount,
+          mint,
+          amount: walletBalance + 100_000,
+        });
+        assert.fail("expected insufficient-funds failure");
+      } catch (err: any) {
+        const msg =
+          (err?.toString?.() ?? String(err)) +
+          " " +
+          (err?.logs?.join(" ") ?? "");
+        assert.match(
+          msg,
+          /insufficient funds|0x1\b/i,
+          `unexpected error: ${msg}`
+        );
+      }
+
+      // Atomic rollback: vault state should be untouched by the failed lock
+      const vault = await program.account.lockVault.fetch(vaultPda);
+      assert.strictEqual(vault.totalLocked.toNumber(), 0);
+      assert.strictEqual(vault.totalLockers.toNumber(), 0);
+      const vaultTa = await getAccount(
+        connection,
+        vaultTokenAccount,
+        "confirmed"
+      );
+      assert.strictEqual(
+        Number(vaultTa.amount),
+        0,
+        "vault token account should not have received anything"
+      );
+    });
+
+    it("rejects locking with a token account for the wrong mint (ConstraintTokenMint)", async () => {
+      const { admin, mint: mintA } = await setupAdmin();
+      const { vaultPda, vaultTokenAccount } = await initVault(admin, mintA);
+
+      // A second, unrelated mint (same mint authority for test convenience)
+      const mintB = await createTestMint(admin);
+      const { user, userTokenAccount: mintBTokenAccount } = await setupUser(
+        mintB,
+        admin
+      );
+
+      // Pass the vault's mint (mintA) as `tokenMint` to satisfy the vault's has_one,
+      // but the user's token account is for mintB — the `token::mint = token_mint`
+      // constraint on user_token_account must fire.
+      try {
+        await lockTokens({
+          user,
+          vault: vaultPda,
+          vaultTokenAccount,
+          userTokenAccount: mintBTokenAccount,
+          mint: mintA,
+          amount: DEFAULT_BRONZE,
+        });
+        assert.fail("expected ConstraintTokenMint");
+      } catch (err: any) {
+        assert.strictEqual(
+          err.error?.errorCode?.code,
+          "ConstraintTokenMint",
+          `expected ConstraintTokenMint, got: ${err?.toString?.() ?? err}`
+        );
+      }
+    });
   });
 });
