@@ -47,6 +47,6 @@ pub enum LockerError {
     WrongVaultTokenAccount,
 
     // === Math errors ===
-    #[msg("An arithmetic operation overflowed")]
+    #[msg("An arithmetic operation overflowed or underflowed")]
     ArithmeticOverflow,
 }
