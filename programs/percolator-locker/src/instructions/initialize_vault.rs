@@ -1,6 +1,7 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{Mint, Token, TokenAccount};
 
+use crate::constants::LOCK_VAULT_SEED;
 use crate::error::LockerError;
 use crate::state::LockVault;
 
@@ -60,7 +61,7 @@ pub struct InitializeVault<'info> {
         init,
         payer = admin,
         space = LockVault::SIZE,
-        seeds = [b"lock_vault", admin.key().as_ref()],
+        seeds = [LOCK_VAULT_SEED, admin.key().as_ref()],
         bump,
     )]
     pub vault: Account<'info, LockVault>,
