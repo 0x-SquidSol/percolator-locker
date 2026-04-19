@@ -5,6 +5,12 @@ use crate::constants::LOCK_POSITION_SEED;
 use crate::error::LockerError;
 use crate::state::{LockPosition, LockVault, Tier};
 
+/// Opens a new lock position: transfers `amount` into the vault, classifies
+/// the earned tier, and computes the earned-discount window. Each lock cycle
+/// earns a discount of equal duration applied AFTER the lock ends — encoded
+/// as `discount_end = lock_end + lock_duration`. A user who locks for N
+/// seconds receives the fee discount for N additional seconds once their
+/// tokens become withdrawable.
 pub fn handler(ctx: Context<Lock>, amount: u64) -> Result<()> {
     // Input validation — reject zero and below-Bronze amounts before doing any work.
     require!(amount > 0, LockerError::InvalidAmount);
