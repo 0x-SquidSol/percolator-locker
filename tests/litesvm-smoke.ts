@@ -1,11 +1,6 @@
-import { LiteSVM, Clock } from "litesvm";
-import { LiteSVMProvider } from "anchor-litesvm";
-import { Program, BN } from "@coral-xyz/anchor";
-import { PublicKey } from "@solana/web3.js";
+import { Clock } from "litesvm";
 import { assert } from "chai";
-import { PercolatorLocker } from "../target/types/percolator_locker";
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const idl = require("../target/idl/percolator_locker.json");
+import { makeHarness } from "../test-helpers/litesvm";
 
 /**
  * Smoke test for the LiteSVM harness.
@@ -21,41 +16,31 @@ const idl = require("../target/idl/percolator_locker.json");
  * real test is test logic, not infrastructure.
  */
 describe("litesvm harness smoke test", () => {
-  const PROGRAM_ID = new PublicKey(
-    "91JU1rmiLAPNcmC9Kew8cCXTRGFW1Pe67ZreijUia5S8"
-  );
-  const PROGRAM_SO_PATH = "target/deploy/percolator_locker.so";
-
   it("loads the program, wires an Anchor Program, and warps the clock", () => {
-    // Spin up an in-process SVM and load our program's .so
-    const svm = new LiteSVM();
-    svm.addProgramFromFile(PROGRAM_ID, PROGRAM_SO_PATH);
+    const { svm, program, programId } = makeHarness();
 
-    // Verify the program account is present and executable
-    const programAccount = svm.getAccount(PROGRAM_ID);
+    // Program account present + executable. `svm.getAccount` returns the
+    // web3.js `AccountInfo<Uint8Array>` shape (not the raw napi Account
+    // class), so `executable` is a boolean property, not a method.
+    const programAccount = svm.getAccount(programId);
     assert.ok(programAccount !== null, "program account should be loaded");
-    assert.ok(
+    assert.strictEqual(
       programAccount!.executable,
+      true,
       "program account should be executable"
     );
 
-    // Build an Anchor Program against the LiteSVM-backed provider.
-    // If this compiles-and-constructs cleanly, Anchor can dispatch calls
-    // against LiteSVM the same way it does against a test-validator.
-    const provider = new LiteSVMProvider(svm);
-    const program = new Program<PercolatorLocker>(
-      idl as any,
-      provider as any
-    );
+    // Anchor Program carries the right program id — proves the IDL address
+    // was read correctly and the provider wiring is consistent.
     assert.ok(
-      program.programId.equals(PROGRAM_ID),
+      program.programId.equals(programId),
       "Anchor Program should carry the correct program id"
     );
 
-    // Warp the on-chain clock forward and verify it took effect.
-    // This is the primitive that unblocks every time-based test in the
-    // upcoming Phase 5/6/8 work — unlock's `now >= lock_end`, refresh_lock's
-    // cycle check, and any discount_end expiry scenario all depend on it.
+    // Warp the on-chain clock forward and verify the sysvar moved. This is
+    // the primitive that unblocks every future time-based test — unlock's
+    // `now >= lock_end`, refresh_lock's cycle check, any discount_end
+    // expiry scenario.
     const before = svm.getClock();
     const targetTs = before.unixTimestamp + BigInt(31 * 24 * 60 * 60); // +31 days
     svm.setClock(
