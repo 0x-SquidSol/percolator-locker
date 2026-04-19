@@ -483,4 +483,202 @@ describe("unlock (litesvm)", () => {
       "user B's token balance unchanged"
     );
   });
+
+  // === Rejection tests ===
+
+  it("rejects unlock before the lock window elapses (LockNotExpired)", async () => {
+    const { svm, provider, program } = makeHarness();
+    const admin = setupAdmin(svm);
+    const mint = await createTestMint(svm, provider, admin);
+    const { vaultPda, vaultTokenAccount } = await initVault(program, admin, mint);
+    const { user, userTokenAccount } = await setupUser(
+      svm,
+      provider,
+      mint,
+      admin,
+      20_000_000
+    );
+
+    // Lock, but do NOT warp the clock. The handler's `now >= lock_end` guard
+    // should reject an immediate unlock attempt.
+    await lockTokens(
+      program,
+      user,
+      vaultPda,
+      vaultTokenAccount,
+      userTokenAccount,
+      mint,
+      DEFAULT_BRONZE
+    );
+
+    try {
+      await unlockTokens(
+        program,
+        user,
+        vaultPda,
+        vaultTokenAccount,
+        userTokenAccount,
+        mint
+      );
+      assert.fail("expected LockNotExpired");
+    } catch (err: any) {
+      assert.strictEqual(
+        err.error?.errorCode?.code,
+        "LockNotExpired",
+        `expected LockNotExpired, got: ${err?.toString?.() ?? err}`
+      );
+    }
+  });
+
+  it("rejects unlock of someone else's position (ConstraintSeeds)", async () => {
+    const { svm, provider, program } = makeHarness();
+    const admin = setupAdmin(svm);
+    const mint = await createTestMint(svm, provider, admin);
+    const { vaultPda, vaultTokenAccount } = await initVault(program, admin, mint);
+
+    // User A locks; user B is a funded non-locker who will try to steal.
+    const { user: userA, userTokenAccount: taA } = await setupUser(
+      svm,
+      provider,
+      mint,
+      admin,
+      20_000_000
+    );
+    const { user: userB, userTokenAccount: taB } = await setupUser(
+      svm,
+      provider,
+      mint,
+      admin,
+      20_000_000
+    );
+
+    const [aLockPositionPda] = PublicKey.findProgramAddressSync(
+      [LOCK_POSITION_SEED, vaultPda.toBuffer(), userA.publicKey.toBuffer()],
+      program.programId
+    );
+    await lockTokens(
+      program,
+      userA,
+      vaultPda,
+      vaultTokenAccount,
+      taA,
+      mint,
+      DEFAULT_BRONZE
+    );
+
+    // Warp past A's lock_end so the time guard can't be the failure reason —
+    // we want to isolate the wrong-owner failure mode specifically.
+    const positionA = await program.account.lockPosition.fetch(aLockPositionPda);
+    warpTo(svm, BigInt(positionA.lockEnd.toNumber() + 1));
+
+    // B attempts unlock passing A's lock_position PDA as `lockPosition`.
+    // Anchor derives the expected PDA from [LOCK_POSITION_SEED, vault, B.key]
+    // (owner = B in the accounts struct) and compares against the passed
+    // pubkey — mismatch fires ConstraintSeeds BEFORE the handler runs.
+    try {
+      await program.methods
+        .unlock()
+        .accountsStrict({
+          owner: userB.publicKey,
+          vault: vaultPda,
+          lockPosition: aLockPositionPda,
+          userTokenAccount: taB,
+          vaultTokenAccount,
+          tokenMint: mint,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([userB])
+        .rpc();
+      assert.fail("expected ConstraintSeeds");
+    } catch (err: any) {
+      assert.strictEqual(
+        err.error?.errorCode?.code,
+        "ConstraintSeeds",
+        `expected ConstraintSeeds, got: ${err?.toString?.() ?? err}`
+      );
+    }
+  });
+
+  it("rejects a second unlock on an already-inactive position (PositionNotActive)", async () => {
+    const { svm, provider, program } = makeHarness();
+    const admin = setupAdmin(svm);
+    const mint = await createTestMint(svm, provider, admin);
+    const { vaultPda, vaultTokenAccount } = await initVault(program, admin, mint);
+    const { user, userTokenAccount } = await setupUser(
+      svm,
+      provider,
+      mint,
+      admin,
+      20_000_000
+    );
+
+    const lockPositionPda = await lockTokens(
+      program,
+      user,
+      vaultPda,
+      vaultTokenAccount,
+      userTokenAccount,
+      mint,
+      DEFAULT_BRONZE
+    );
+
+    // Warp past lock_end and unlock successfully.
+    const positionBefore = await program.account.lockPosition.fetch(
+      lockPositionPda
+    );
+    warpTo(svm, BigInt(positionBefore.lockEnd.toNumber() + 1));
+    await unlockTokens(
+      program,
+      user,
+      vaultPda,
+      vaultTokenAccount,
+      userTokenAccount,
+      mint
+    );
+
+    // Confirm the first unlock actually succeeded before attempting the
+    // second — prevents misleading failure attribution if the first unlock
+    // silently regressed.
+    const positionMid = await program.account.lockPosition.fetch(
+      lockPositionPda
+    );
+    assert.strictEqual(
+      positionMid.isActive,
+      false,
+      "first unlock should flip is_active to false"
+    );
+    assert.strictEqual(
+      positionMid.amount.toNumber(),
+      0,
+      "first unlock should zero the amount"
+    );
+
+    // Force a fresh blockhash before the second unlock. Without this,
+    // LiteSVM reuses the same blockhash, producing a duplicate tx signature
+    // that Solana's runtime rejects BEFORE executing the program — the
+    // assertion would then see a generic SendTransactionError with no logs
+    // instead of the expected AnchorError.
+    svm.expireBlockhash();
+
+    // Second unlock: seeds still match (owner, vault, bump unchanged),
+    // has_one still matches, account deserializes — so the handler runs
+    // and the `require!(is_active)` guard fires.
+    try {
+      await unlockTokens(
+        program,
+        user,
+        vaultPda,
+        vaultTokenAccount,
+        userTokenAccount,
+        mint
+      );
+      assert.fail("expected PositionNotActive");
+    } catch (err: any) {
+      assert.strictEqual(
+        err.error?.errorCode?.code,
+        "PositionNotActive",
+        `expected PositionNotActive, got: ${err?.toString?.() ?? err}`
+      );
+    }
+  });
 });
