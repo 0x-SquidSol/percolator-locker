@@ -6,6 +6,11 @@ use anchor_lang::prelude::*;
 /// compatible with the previous `u8` representation. `None` is ordered first
 /// so zero-init (Anchor's default for freshly-created accounts) decodes to
 /// `Tier::None` without special handling.
+///
+/// Variants are append-only: never insert mid-list or renumber existing
+/// entries, as persisted `LockPosition::tier` bytes would then misdecode.
+/// Construct values by name or via Borsh deserialization — never
+/// `mem::transmute` from an arbitrary `u8`.
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
 pub enum Tier {
