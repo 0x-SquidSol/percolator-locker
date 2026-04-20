@@ -59,6 +59,9 @@ pub enum LockerError {
     #[msg("Config update rejected: requested threshold change exceeds the per-call magnitude cap")]
     ConfigChangeOverLimit,
 
+    #[msg("Config update rejected: at least one field must be supplied — an empty call would burn the cooldown for no state change")]
+    EmptyConfigUpdate,
+
     // NOTE: append-only. Anchor auto-numbers variants by declaration position
     // (starting at 6000), so inserting mid-enum shifts every subsequent code
     // and breaks any client pinned to a specific numeric error. New variants

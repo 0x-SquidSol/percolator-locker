@@ -15,15 +15,21 @@ pub(crate) const CONFIG_UPDATE_COOLDOWN_SECS: i64 = 7 * 24 * 60 * 60;
 /// thresholds. Every argument is `Option<u64>` — admin passes `None` for
 /// fields they want to leave alone, so partial updates are first-class.
 ///
-/// Guards enforced:
+/// Guards enforced (in this order):
+/// - At least one arg must be `Some` (fires `EmptyConfigUpdate` otherwise).
+///   An all-None call would still advance `last_config_update` and burn the
+///   cooldown slot for zero state change — rejecting it closes a silent-DoS
+///   footgun against the legitimate admin under a compromised-key scenario.
 /// - `has_one = admin` on the accounts struct (admin must be the signer
 ///   recorded at init).
 /// - Cooldown: `now - vault.last_config_update >= CONFIG_UPDATE_COOLDOWN_SECS`.
 ///   Fires `ConfigCooldownActive` otherwise. The first call after init is
 ///   always allowed because `last_config_update` starts at 0.
 /// - Per-threshold magnitude cap: for each tier that's being changed,
-///   `|new - old| <= old / 2`. A call that tries to move a threshold by
-///   more than 50% of its current value fires `ConfigChangeOverLimit`.
+///   `|new - old| <= (old / 2).max(1)`. A call that tries to move a threshold
+///   by more than 50% of its current value fires `ConfigChangeOverLimit`. The
+///   `.max(1)` floors the cap at 1 so a threshold stuck at 1 is not frozen
+///   forever by integer-division truncating `1 / 2` to 0.
 ///   `lock_duration` has no per-call cap (MIN/MAX bounds are sufficient).
 /// - `lock_duration` bounds: final value in `[MIN_LOCK_DURATION, MAX_LOCK_DURATION]`.
 /// - Tier invariants on the FINAL state: `bronze > 0`, `bronze < silver < gold`.
@@ -39,6 +45,18 @@ pub fn handler(
     new_tier_silver: Option<u64>,
     new_tier_gold: Option<u64>,
 ) -> Result<()> {
+    // Guard: reject calls that supply no field changes. A fully-None call
+    // would still advance last_config_update and burn the 7-day cooldown
+    // slot while changing nothing on-chain — giving a stolen admin key a
+    // silent DoS against the legitimate admin's next reconfiguration.
+    require!(
+        new_lock_duration.is_some()
+            || new_tier_bronze.is_some()
+            || new_tier_silver.is_some()
+            || new_tier_gold.is_some(),
+        LockerError::EmptyConfigUpdate
+    );
+
     // Cache current state and keys before taking any mutable borrow.
     let now = Clock::get()?.unix_timestamp;
     let last_update = ctx.accounts.vault.last_config_update;
