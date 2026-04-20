@@ -508,6 +508,61 @@ describe("update_config (litesvm)", () => {
     );
   });
 
+  it("new lock after an update_config classifies against the new tier thresholds", async () => {
+    // Tier-direction analog of the cycle_duration snapshot test above:
+    // proves that lock.rs's calculate_tier call reads the vault's LIVE
+    // tier_bronze/silver/gold at lock time, so an admin retune via
+    // update_config is observable on the very next lock. Without this
+    // coverage a regression that cached thresholds at init (or read a
+    // stale copy) would pass the cycle_duration test yet silently
+    // misclassify new positions.
+    const { svm, provider, program } = makeHarness();
+    const admin = setupAdmin(svm);
+    // Warp past COOLDOWN_SECS so the first update_config call is unrestricted,
+    // as the handler's doc-comment promises (relies on mainnet-realistic `now`).
+    warpTo(svm, INITIAL_WARP_TS);
+    const mint = await createTestMint(svm, provider, admin);
+    const { vaultPda, vaultTokenAccount } = await initVault(
+      program,
+      admin,
+      mint
+    );
+
+    // Raise silver by the full 50% cap (1_000_000 -> 1_500_000). Bronze and
+    // gold stay put, so bronze < silver < gold still holds (500K < 1.5M < 5M).
+    const newSilver = DEFAULT_SILVER + DEFAULT_SILVER / 2;
+    await updateConfig(program, admin, vaultPda, { silver: newSilver });
+    svm.expireBlockhash();
+
+    const { user, userTokenAccount } = await setupUser(
+      svm,
+      provider,
+      mint,
+      admin,
+      USER_STARTING_BALANCE
+    );
+    // X = DEFAULT_SILVER = 1_000_000: under OLD thresholds this is exactly
+    // Silver; under NEW thresholds it is Bronze (X >= bronze 500K but X <
+    // new silver 1.5M). The tier classification is observably different
+    // between the two worlds, so the assertion pins the live-read semantic.
+    const amount = DEFAULT_SILVER;
+    const lockPositionPda = await lockTokens(
+      program,
+      user,
+      vaultPda,
+      vaultTokenAccount,
+      userTokenAccount,
+      mint,
+      amount
+    );
+    const position = await program.account.lockPosition.fetch(lockPositionPda);
+    assert.deepStrictEqual(
+      position.tier,
+      { bronze: {} },
+      "new lock should classify against the POST-update tier thresholds (Bronze), not the pre-update thresholds (which would have been Silver)"
+    );
+  });
+
   it("existing lock position is fully immune to update_config: position fields, refresh behavior, and vault accounting all preserved", async () => {
     const { svm, provider, program } = makeHarness();
     const admin = setupAdmin(svm);
