@@ -9,7 +9,12 @@ use crate::state::LockVault;
 /// `vault.last_config_update` to prevent rapid-fire config churn that
 /// could destabilize the tier economy even under a multisig admin.
 /// 7 days = 7 * 24 * 60 * 60 = 604,800 seconds.
-pub(crate) const CONFIG_UPDATE_COOLDOWN_SECS: i64 = 7 * 24 * 60 * 60;
+///
+/// Exported via `#[constant]` so downstream clients (indexers, app UI)
+/// can derive "earliest next reconfig" timings from the IDL instead of
+/// hardcoding 604_800 across repos.
+#[constant]
+pub const CONFIG_UPDATE_COOLDOWN_SECS: i64 = 7 * 24 * 60 * 60;
 
 /// Lets the vault admin adjust `lock_duration` and the three tier
 /// thresholds. Every argument is `Option<u64>` — admin passes `None` for
