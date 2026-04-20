@@ -678,4 +678,47 @@ describe("refresh_lock (litesvm)", () => {
       );
     }
   });
+
+  it("rejects refresh at exactly discount_end (DiscountLapsed boundary)", async () => {
+    const { svm, provider, program } = makeHarness();
+    const admin = setupAdmin(svm);
+    const mint = await createTestMint(svm, provider, admin);
+    const { vaultPda, vaultTokenAccount } = await initVault(program, admin, mint);
+    const { user, userTokenAccount } = await setupUser(
+      svm,
+      provider,
+      mint,
+      admin,
+      USER_STARTING_BALANCE
+    );
+
+    const lockPositionPda = await lockTokens(
+      program,
+      user,
+      vaultPda,
+      vaultTokenAccount,
+      userTokenAccount,
+      mint,
+      DEFAULT_BRONZE
+    );
+    const position = await program.account.lockPosition.fetch(lockPositionPda);
+
+    // Warp to exactly `discount_end`. The handler's guard is `now < discount_end`
+    // (strict), so at the boundary the refresh must reject — a non-strict `<=`
+    // would let this case through, leaving `new_discount_end == new_lock_end`
+    // and zero earned-discount runway after the refresh. This test pins the
+    // strictness of the guard against that mutation.
+    warpTo(svm, BigInt(position.discountEnd.toNumber()));
+
+    try {
+      await refreshLock(program, user, vaultPda);
+      assert.fail("expected DiscountLapsed");
+    } catch (err: any) {
+      assert.strictEqual(
+        err.error?.errorCode?.code,
+        "DiscountLapsed",
+        `expected DiscountLapsed, got: ${err?.toString?.() ?? err}`
+      );
+    }
+  });
 });
