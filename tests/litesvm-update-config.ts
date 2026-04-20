@@ -18,6 +18,7 @@ import { LiteSVM } from "litesvm";
 import { LiteSVMProvider } from "anchor-litesvm";
 import { assert } from "chai";
 import { makeHarness, warpTo } from "../test-helpers/litesvm";
+import { decodeEventsForSignature } from "../test-helpers/events";
 import { PercolatorLocker } from "../target/types/percolator_locker";
 
 const LOCK_VAULT_SEED = Buffer.from("lock_vault");
@@ -277,12 +278,22 @@ describe("update_config (litesvm)", () => {
     const newSilver = DEFAULT_SILVER + DEFAULT_SILVER / 4;
     const newGold = DEFAULT_GOLD + DEFAULT_GOLD / 4;
 
-    await updateConfig(program, admin, vaultPda, {
-      lockDuration: newDuration,
-      bronze: newBronze,
-      silver: newSilver,
-      gold: newGold,
-    });
+    // Inline the update_config instruction (instead of using the updateConfig
+    // helper) so the tx signature is captured for event-payload decoding
+    // below. The helper discards it.
+    const updateSignature = await program.methods
+      .updateConfig(
+        new BN(newDuration),
+        new BN(newBronze),
+        new BN(newSilver),
+        new BN(newGold)
+      )
+      .accountsStrict({
+        admin: admin.publicKey,
+        vault: vaultPda,
+      })
+      .signers([admin])
+      .rpc();
     const nowAfter = Number(svm.getClock().unixTimestamp);
 
     const vaultAfter = await program.account.lockVault.fetch(vaultPda);
@@ -326,6 +337,63 @@ describe("update_config (litesvm)", () => {
       "token_decimals untouched"
     );
     assert.strictEqual(vaultAfter.bump, vaultBefore.bump, "bump untouched");
+
+    // --- ConfigUpdated event payload matches the state the handler wrote ---
+    // Events are the public ABI consumed by downstream indexers; pinning
+    // every field kills any mutation that corrupts one or drops the emit.
+    // Anchor's EventParser lower-cases the first letter of the struct name
+    // so Rust's `ConfigUpdated` surfaces as "configUpdated". Every field is
+    // the FINAL post-update state (not the caller's args or the pre-update
+    // state) — the handler emits after the writes.
+    const updateEvents = decodeEventsForSignature(
+      svm,
+      program,
+      updateSignature
+    );
+    assert.strictEqual(
+      updateEvents.length,
+      1,
+      "update_config tx should emit exactly one event"
+    );
+    assert.strictEqual(
+      updateEvents[0].name,
+      "configUpdated",
+      "update_config tx event name should be 'configUpdated'"
+    );
+    const updateData = updateEvents[0].data;
+    assert.ok(
+      updateData.vault.equals(vaultPda),
+      "ConfigUpdated.vault should equal the vault PDA"
+    );
+    assert.ok(
+      updateData.admin.equals(admin.publicKey),
+      "ConfigUpdated.admin should equal the signer"
+    );
+    assert.strictEqual(
+      updateData.lockDuration.toNumber(),
+      newDuration,
+      "ConfigUpdated.lock_duration should equal the new lock_duration"
+    );
+    assert.strictEqual(
+      updateData.tierBronze.toNumber(),
+      newBronze,
+      "ConfigUpdated.tier_bronze should equal the new bronze threshold"
+    );
+    assert.strictEqual(
+      updateData.tierSilver.toNumber(),
+      newSilver,
+      "ConfigUpdated.tier_silver should equal the new silver threshold"
+    );
+    assert.strictEqual(
+      updateData.tierGold.toNumber(),
+      newGold,
+      "ConfigUpdated.tier_gold should equal the new gold threshold"
+    );
+    assert.strictEqual(
+      updateData.timestamp.toNumber(),
+      vaultAfter.lastConfigUpdate.toNumber(),
+      "ConfigUpdated.timestamp should equal the vault's new last_config_update"
+    );
   });
 
   it("partial update (lock_duration only) leaves tier thresholds byte-identical", async () => {
