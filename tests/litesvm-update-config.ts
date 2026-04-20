@@ -741,6 +741,34 @@ describe("update_config (litesvm)", () => {
     }
   });
 
+  it("rejects a threshold decrease that exceeds the per-call cap by one unit (ConfigChangeOverLimit)", async () => {
+    const { svm, provider, program } = makeHarness();
+    const admin = setupAdmin(svm);
+    // Warp past COOLDOWN_SECS so the first update_config call is unrestricted,
+    // as the handler's doc-comment promises (relies on mainnet-realistic `now`).
+    warpTo(svm, INITIAL_WARP_TS);
+    const mint = await createTestMint(svm, provider, admin);
+    const { vaultPda } = await initVault(program, admin, mint);
+
+    // cap = 500_000 / 2 = 250_000; a decrease of 250_001 is one unit over.
+    // abs_diff is symmetric, so the handler must reject the decrease direction
+    // identically to the increase direction covered by the preceding test.
+    // Without this coverage a future swap from abs_diff to saturating_sub
+    // (which returns 0 whenever new < old) would silently bypass the cap for
+    // every downward change.
+    const target = DEFAULT_BRONZE - (DEFAULT_BRONZE / 2 + 1);
+    try {
+      await updateConfig(program, admin, vaultPda, { bronze: target });
+      assert.fail("expected ConfigChangeOverLimit");
+    } catch (err: any) {
+      assert.strictEqual(
+        err.error?.errorCode?.code,
+        "ConfigChangeOverLimit",
+        `expected ConfigChangeOverLimit, got: ${err?.toString?.() ?? err}`
+      );
+    }
+  });
+
   it("rejects a final state where silver <= bronze (InvalidTierThresholds)", async () => {
     const { svm, provider, program } = makeHarness();
     const admin = setupAdmin(svm);
