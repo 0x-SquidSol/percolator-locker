@@ -9,6 +9,7 @@ pub use instructions::initialize_vault::*;
 pub use instructions::lock::*;
 pub use instructions::refresh_lock::*;
 pub use instructions::unlock::*;
+pub use instructions::update_config::*;
 
 declare_id!("91JU1rmiLAPNcmC9Kew8cCXTRGFW1Pe67ZreijUia5S8");
 
@@ -42,5 +43,21 @@ pub mod percolator_locker {
 
     pub fn refresh_lock(ctx: Context<RefreshLock>) -> Result<()> {
         crate::instructions::refresh_lock::handler(ctx)
+    }
+
+    pub fn update_config(
+        ctx: Context<UpdateConfig>,
+        new_lock_duration: Option<u64>,
+        new_tier_bronze: Option<u64>,
+        new_tier_silver: Option<u64>,
+        new_tier_gold: Option<u64>,
+    ) -> Result<()> {
+        crate::instructions::update_config::handler(
+            ctx,
+            new_lock_duration,
+            new_tier_bronze,
+            new_tier_silver,
+            new_tier_gold,
+        )
     }
 }

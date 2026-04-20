@@ -1,6 +1,157 @@
 use anchor_lang::prelude::*;
 
+use crate::error::LockerError;
+use crate::instructions::initialize_vault::{MAX_LOCK_DURATION, MIN_LOCK_DURATION};
 use crate::state::LockVault;
+
+/// Minimum seconds that must elapse between successive successful
+/// `update_config` calls for the same vault. Enforced against
+/// `vault.last_config_update` to prevent rapid-fire config churn that
+/// could destabilize the tier economy even under a multisig admin.
+/// 7 days = 7 * 24 * 60 * 60 = 604,800 seconds.
+pub(crate) const CONFIG_UPDATE_COOLDOWN_SECS: i64 = 7 * 24 * 60 * 60;
+
+/// Lets the vault admin adjust `lock_duration` and the three tier
+/// thresholds. Every argument is `Option<u64>` — admin passes `None` for
+/// fields they want to leave alone, so partial updates are first-class.
+///
+/// Guards enforced:
+/// - `has_one = admin` on the accounts struct (admin must be the signer
+///   recorded at init).
+/// - Cooldown: `now - vault.last_config_update >= CONFIG_UPDATE_COOLDOWN_SECS`.
+///   Fires `ConfigCooldownActive` otherwise. The first call after init is
+///   always allowed because `last_config_update` starts at 0.
+/// - Per-threshold magnitude cap: for each tier that's being changed,
+///   `|new - old| <= old / 2`. A call that tries to move a threshold by
+///   more than 50% of its current value fires `ConfigChangeOverLimit`.
+///   `lock_duration` has no per-call cap (MIN/MAX bounds are sufficient).
+/// - `lock_duration` bounds: final value in `[MIN_LOCK_DURATION, MAX_LOCK_DURATION]`.
+/// - Tier invariants on the FINAL state: `bronze > 0`, `bronze < silver < gold`.
+///
+/// Existing `LockPosition`s are immune to config changes by design: each
+/// position's `tier` and `cycle_duration` are snapshotted at lock time
+/// and never re-derived from the vault. A successful `update_config`
+/// only influences FUTURE locks.
+pub fn handler(
+    ctx: Context<UpdateConfig>,
+    new_lock_duration: Option<u64>,
+    new_tier_bronze: Option<u64>,
+    new_tier_silver: Option<u64>,
+    new_tier_gold: Option<u64>,
+) -> Result<()> {
+    // Cache current state and keys before taking any mutable borrow.
+    let now = Clock::get()?.unix_timestamp;
+    let last_update = ctx.accounts.vault.last_config_update;
+    let old_lock_duration = ctx.accounts.vault.lock_duration;
+    let old_bronze = ctx.accounts.vault.tier_bronze;
+    let old_silver = ctx.accounts.vault.tier_silver;
+    let old_gold = ctx.accounts.vault.tier_gold;
+    let vault_key = ctx.accounts.vault.key();
+    let admin_key = ctx.accounts.admin.key();
+
+    // Guard: cooldown. checked_sub guards against i64 underflow if
+    // last_config_update somehow exceeded now (not reachable in the current
+    // program since init hard-codes 0, but defensive).
+    let elapsed = now
+        .checked_sub(last_update)
+        .ok_or(error!(LockerError::ArithmeticOverflow))?;
+    require!(
+        elapsed >= CONFIG_UPDATE_COOLDOWN_SECS,
+        LockerError::ConfigCooldownActive
+    );
+
+    // Guard: per-threshold magnitude cap. Applied only to fields that are
+    // actually being changed. abs_diff avoids the unsigned-subtraction
+    // underflow concern on u64.
+    if let Some(new_bronze) = new_tier_bronze {
+        require!(
+            new_bronze.abs_diff(old_bronze) <= old_bronze / 2,
+            LockerError::ConfigChangeOverLimit
+        );
+    }
+    if let Some(new_silver) = new_tier_silver {
+        require!(
+            new_silver.abs_diff(old_silver) <= old_silver / 2,
+            LockerError::ConfigChangeOverLimit
+        );
+    }
+    if let Some(new_gold) = new_tier_gold {
+        require!(
+            new_gold.abs_diff(old_gold) <= old_gold / 2,
+            LockerError::ConfigChangeOverLimit
+        );
+    }
+
+    // Compute final state (new values where supplied, old values otherwise).
+    let final_lock_duration = new_lock_duration.unwrap_or(old_lock_duration);
+    let final_bronze = new_tier_bronze.unwrap_or(old_bronze);
+    let final_silver = new_tier_silver.unwrap_or(old_silver);
+    let final_gold = new_tier_gold.unwrap_or(old_gold);
+
+    // Guard: lock_duration bounds (same bounds initialize_vault enforces).
+    require!(
+        final_lock_duration >= MIN_LOCK_DURATION,
+        LockerError::LockDurationTooShort
+    );
+    require!(
+        final_lock_duration <= MAX_LOCK_DURATION,
+        LockerError::LockDurationTooLong
+    );
+
+    // Guard: tier ordering and positivity on the FINAL state.
+    require!(final_bronze > 0, LockerError::InvalidTierThresholds);
+    require!(
+        final_silver > final_bronze,
+        LockerError::InvalidTierThresholds
+    );
+    require!(
+        final_gold > final_silver,
+        LockerError::InvalidTierThresholds
+    );
+
+    // Apply writes. total_locked, total_lockers, admin, token_mint,
+    // vault_token_account, token_decimals, and bump are deliberately NOT
+    // touched — config changes must not corrupt accounting or move the
+    // vault's custody/identity.
+    let vault = &mut ctx.accounts.vault;
+    vault.lock_duration = final_lock_duration;
+    vault.tier_bronze = final_bronze;
+    vault.tier_silver = final_silver;
+    vault.tier_gold = final_gold;
+    vault.last_config_update = now;
+
+    emit!(ConfigUpdated {
+        vault: vault_key,
+        admin: admin_key,
+        lock_duration: final_lock_duration,
+        tier_bronze: final_bronze,
+        tier_silver: final_silver,
+        tier_gold: final_gold,
+        timestamp: now,
+    });
+
+    Ok(())
+}
+
+/// Emitted on every successful `update_config` call. Carries the FULL
+/// resulting config (not just the changed fields) so indexers can
+/// reconstruct the vault's state without a cross-reference lookup.
+#[event]
+pub struct ConfigUpdated {
+    pub vault: Pubkey,
+    pub admin: Pubkey,
+    /// Final lock_duration after the update.
+    pub lock_duration: u64,
+    /// Final tier_bronze after the update.
+    pub tier_bronze: u64,
+    /// Final tier_silver after the update.
+    pub tier_silver: u64,
+    /// Final tier_gold after the update.
+    pub tier_gold: u64,
+    /// The unix_timestamp the update was applied at — stamped into
+    /// `vault.last_config_update` in the same tx.
+    pub timestamp: i64,
+}
 
 /// Accounts required by the `update_config` instruction.
 ///
