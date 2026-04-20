@@ -30,12 +30,12 @@ pub const CONFIG_UPDATE_COOLDOWN_SECS: i64 = 7 * 24 * 60 * 60;
 /// - Cooldown: `now - vault.last_config_update >= CONFIG_UPDATE_COOLDOWN_SECS`.
 ///   Fires `ConfigCooldownActive` otherwise. The first call after init is
 ///   always allowed because `last_config_update` starts at 0.
-/// - Per-threshold magnitude cap: for each tier that's being changed,
-///   `|new - old| <= (old / 2).max(1)`. A call that tries to move a threshold
-///   by more than 50% of its current value fires `ConfigChangeOverLimit`. The
-///   `.max(1)` floors the cap at 1 so a threshold stuck at 1 is not frozen
-///   forever by integer-division truncating `1 / 2` to 0.
-///   `lock_duration` has no per-call cap (MIN/MAX bounds are sufficient).
+/// - Per-field magnitude cap: for each tier OR `lock_duration` that's being
+///   changed, `|new - old| <= (old / 2).max(1)`. A call that tries to move
+///   any of those fields by more than 50% of its current value fires
+///   `ConfigChangeOverLimit`. The `.max(1)` floors the cap at 1 so a field
+///   stuck at 1 is not frozen forever by integer-division truncating
+///   `1 / 2` to 0.
 /// - `lock_duration` bounds: final value in `[MIN_LOCK_DURATION, MAX_LOCK_DURATION]`.
 /// - Tier invariants on the FINAL state: `bronze > 0`, `bronze < silver < gold`.
 ///
@@ -105,6 +105,13 @@ pub fn handler(
     if let Some(new_gold) = new_tier_gold {
         require!(
             new_gold.abs_diff(old_gold) <= (old_gold / 2).max(1),
+            LockerError::ConfigChangeOverLimit
+        );
+    }
+    if let Some(new_duration) = new_lock_duration {
+        require!(
+            new_duration.abs_diff(old_lock_duration)
+                <= (old_lock_duration / 2).max(1),
             LockerError::ConfigChangeOverLimit
         );
     }

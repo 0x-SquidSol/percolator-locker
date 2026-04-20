@@ -272,7 +272,7 @@ describe("update_config (litesvm)", () => {
     );
     const vaultBefore = await program.account.lockVault.fetch(vaultPda);
 
-    const newDuration = DEFAULT_LOCK_DURATION * 2; // still under MAX
+    const newDuration = DEFAULT_LOCK_DURATION + DEFAULT_LOCK_DURATION / 4; // +25%, within cap
     const newBronze = DEFAULT_BRONZE + DEFAULT_BRONZE / 4; // +25%
     const newSilver = DEFAULT_SILVER + DEFAULT_SILVER / 4;
     const newGold = DEFAULT_GOLD + DEFAULT_GOLD / 4;
@@ -941,6 +941,15 @@ describe("update_config (litesvm)", () => {
     const mint = await createTestMint(svm, provider, admin);
     const { vaultPda } = await initVault(program, admin, mint);
 
+    // Pre-seed lock_duration to a value where MIN - 1 is reachable within the
+    // per-call cap, so the MIN bound guard fires cleanly instead of being
+    // masked by the lock_duration cap. old = 172_797, cap = old/2 = 86_398,
+    // delta to MIN - 1 = 86_399 is 86_398 (exactly at cap), passes.
+    await setVaultState(svm, program, vaultPda, (vault) => {
+      vault.lockDuration = new BN(172_797);
+    });
+    svm.expireBlockhash();
+
     try {
       await updateConfig(program, admin, vaultPda, {
         lockDuration: MIN_LOCK_DURATION - 1,
@@ -964,6 +973,15 @@ describe("update_config (litesvm)", () => {
     const mint = await createTestMint(svm, provider, admin);
     const { vaultPda } = await initVault(program, admin, mint);
 
+    // Pre-seed lock_duration to a value where MAX + 1 is reachable within the
+    // per-call cap. old = 21_024_001, cap = old/2 = 10_512_000, delta to
+    // MAX + 1 = 31_536_001 is 10_512_000 (exactly at cap), passes — so MAX
+    // bound guard fires rather than the per-call magnitude cap.
+    await setVaultState(svm, program, vaultPda, (vault) => {
+      vault.lockDuration = new BN(21_024_001);
+    });
+    svm.expireBlockhash();
+
     try {
       await updateConfig(program, admin, vaultPda, {
         lockDuration: MAX_LOCK_DURATION + 1,
@@ -974,6 +992,59 @@ describe("update_config (litesvm)", () => {
         err.error?.errorCode?.code,
         "LockDurationTooLong",
         `expected LockDurationTooLong, got: ${err?.toString?.() ?? err}`
+      );
+    }
+  });
+
+  it("cap allows a +50% lock_duration increase exactly at the boundary", async () => {
+    const { svm, provider, program } = makeHarness();
+    const admin = setupAdmin(svm);
+    warpTo(svm, INITIAL_WARP_TS);
+    const mint = await createTestMint(svm, provider, admin);
+    const { vaultPda } = await initVault(program, admin, mint);
+
+    // delta = DEFAULT_LOCK_DURATION / 2 == cap; final 3_888_000 < MAX.
+    const target = DEFAULT_LOCK_DURATION + DEFAULT_LOCK_DURATION / 2;
+    await updateConfig(program, admin, vaultPda, { lockDuration: target });
+    const vault = await program.account.lockVault.fetch(vaultPda);
+    assert.strictEqual(vault.lockDuration.toNumber(), target);
+  });
+
+  it("cap allows a -50% lock_duration decrease exactly at the boundary", async () => {
+    const { svm, provider, program } = makeHarness();
+    const admin = setupAdmin(svm);
+    warpTo(svm, INITIAL_WARP_TS);
+    const mint = await createTestMint(svm, provider, admin);
+    const { vaultPda } = await initVault(program, admin, mint);
+
+    // delta = DEFAULT_LOCK_DURATION / 2 == cap; final 1_296_000 > MIN.
+    // abs_diff is symmetric so the decrease direction must pass identically
+    // to the increase direction above.
+    const target = DEFAULT_LOCK_DURATION - DEFAULT_LOCK_DURATION / 2;
+    await updateConfig(program, admin, vaultPda, { lockDuration: target });
+    const vault = await program.account.lockVault.fetch(vaultPda);
+    assert.strictEqual(vault.lockDuration.toNumber(), target);
+  });
+
+  it("rejects a lock_duration change that exceeds the per-call cap by one unit (ConfigChangeOverLimit)", async () => {
+    const { svm, provider, program } = makeHarness();
+    const admin = setupAdmin(svm);
+    warpTo(svm, INITIAL_WARP_TS);
+    const mint = await createTestMint(svm, provider, admin);
+    const { vaultPda } = await initVault(program, admin, mint);
+
+    // cap = DEFAULT_LOCK_DURATION / 2 = 1_296_000; delta of 1_296_001 is one
+    // unit over. Pins the cap boundary for lock_duration identically to the
+    // tier-side cap tests.
+    const target = DEFAULT_LOCK_DURATION + DEFAULT_LOCK_DURATION / 2 + 1;
+    try {
+      await updateConfig(program, admin, vaultPda, { lockDuration: target });
+      assert.fail("expected ConfigChangeOverLimit");
+    } catch (err: any) {
+      assert.strictEqual(
+        err.error?.errorCode?.code,
+        "ConfigChangeOverLimit",
+        `expected ConfigChangeOverLimit, got: ${err?.toString?.() ?? err}`
       );
     }
   });
