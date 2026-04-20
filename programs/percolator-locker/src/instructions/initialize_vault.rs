@@ -46,6 +46,11 @@ pub fn handler(
     vault.total_lockers = 0;
     vault.token_decimals = ctx.accounts.token_mint.decimals;
     vault.bump = ctx.bumps.vault;
+    // Initialize to 0 so the first `update_config` call is unrestricted by the
+    // cooldown guard (admin may want to tune parameters once before traffic
+    // arrives). Every successful `update_config` stamps this with the current
+    // clock, enforcing the minimum cooldown thereafter.
+    vault.last_config_update = 0;
 
     Ok(())
 }

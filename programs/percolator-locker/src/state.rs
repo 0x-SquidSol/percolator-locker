@@ -50,11 +50,19 @@ pub struct LockVault {
     pub token_decimals: u8,
     /// PDA bump seed
     pub bump: u8,
+    /// Unix timestamp of the last successful `update_config` call, or 0 if the
+    /// vault has never been reconfigured. `update_config` requires a minimum
+    /// cooldown between calls (reads and writes this field). Initialized to 0
+    /// so the very first call is unrestricted. Placed at the end of the struct
+    /// so adding it does not shift the byte offsets of any existing field,
+    /// preserving downstream byte-layout decoders (`percolator-match`,
+    /// indexers) for fields they already read.
+    pub last_config_update: i64,
 }
 
 impl LockVault {
-    /// Account size: 8 (discriminator) + 32 + 32 + 32 + 8 + 8 + 8 + 8 + 8 + 8 + 1 + 1 = 154
-    pub const SIZE: usize = 8 + 32 + 32 + 32 + 8 + 8 + 8 + 8 + 8 + 8 + 1 + 1;
+    /// Account size: 8 (discriminator) + 32 + 32 + 32 + 8 + 8 + 8 + 8 + 8 + 8 + 1 + 1 + 8 = 162
+    pub const SIZE: usize = 8 + 32 + 32 + 32 + 8 + 8 + 8 + 8 + 8 + 8 + 1 + 1 + 8;
 
     /// Classify a lock amount against this vault's tier thresholds.
     /// Returns the highest tier the amount qualifies for.
