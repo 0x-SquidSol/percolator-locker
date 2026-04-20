@@ -62,22 +62,26 @@ pub fn handler(
 
     // Guard: per-threshold magnitude cap. Applied only to fields that are
     // actually being changed. abs_diff avoids the unsigned-subtraction
-    // underflow concern on u64.
+    // underflow concern on u64. The `.max(1)` floors the cap at 1 base unit
+    // so a threshold whose current value is 1 is not permanently frozen by
+    // integer-division truncating `1 / 2` to 0 — a theoretical footgun if
+    // an admin ever initialized or decayed a threshold to 1. Larger values
+    // are unaffected because `.max(1)` is a no-op above old = 1.
     if let Some(new_bronze) = new_tier_bronze {
         require!(
-            new_bronze.abs_diff(old_bronze) <= old_bronze / 2,
+            new_bronze.abs_diff(old_bronze) <= (old_bronze / 2).max(1),
             LockerError::ConfigChangeOverLimit
         );
     }
     if let Some(new_silver) = new_tier_silver {
         require!(
-            new_silver.abs_diff(old_silver) <= old_silver / 2,
+            new_silver.abs_diff(old_silver) <= (old_silver / 2).max(1),
             LockerError::ConfigChangeOverLimit
         );
     }
     if let Some(new_gold) = new_tier_gold {
         require!(
-            new_gold.abs_diff(old_gold) <= old_gold / 2,
+            new_gold.abs_diff(old_gold) <= (old_gold / 2).max(1),
             LockerError::ConfigChangeOverLimit
         );
     }
