@@ -19,9 +19,6 @@ pub enum LockerError {
     #[msg("The lock period has not expired yet")]
     LockNotExpired,
 
-    #[msg("The earned-discount window has already lapsed — unlock and re-lock instead of refreshing")]
-    DiscountLapsed,
-
     // === Amount errors ===
     #[msg("Lock amount must be greater than zero")]
     InvalidAmount,
@@ -52,4 +49,13 @@ pub enum LockerError {
     // === Math errors ===
     #[msg("An arithmetic operation overflowed or underflowed")]
     ArithmeticOverflow,
+
+    #[msg("The earned-discount window has already lapsed — unlock and re-lock instead of refreshing")]
+    DiscountLapsed,
+
+    // NOTE: append-only. Anchor auto-numbers variants by declaration position
+    // (starting at 6000), so inserting mid-enum shifts every subsequent code
+    // and breaks any client pinned to a specific numeric error. New variants
+    // MUST go here at the end, even if they belong semantically with an
+    // existing section above.
 }
