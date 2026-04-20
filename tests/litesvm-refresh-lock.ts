@@ -18,6 +18,7 @@ import { LiteSVM } from "litesvm";
 import { LiteSVMProvider } from "anchor-litesvm";
 import { assert } from "chai";
 import { makeHarness, warpTo } from "../test-helpers/litesvm";
+import { decodeEventsForSignature } from "../test-helpers/events";
 import { PercolatorLocker } from "../target/types/percolator_locker";
 
 const LOCK_VAULT_SEED = Buffer.from("lock_vault");
@@ -246,7 +247,17 @@ describe("refresh_lock (litesvm)", () => {
     warpTo(svm, BigInt(positionBefore.lockEnd.toNumber()));
     const nowAtRefresh = Number(svm.getClock().unixTimestamp);
 
-    await refreshLock(program, user, vaultPda);
+    // Inline the refresh_lock instruction (instead of the refreshLock helper)
+    // so the tx signature is captured for event-payload decoding below.
+    const refreshSignature = await program.methods
+      .refreshLock()
+      .accountsStrict({
+        owner: user.publicKey,
+        vault: vaultPda,
+        lockPosition: lockPositionPda,
+      })
+      .signers([user])
+      .rpc();
 
     const positionAfter = await program.account.lockPosition.fetch(
       lockPositionPda
@@ -328,6 +339,69 @@ describe("refresh_lock (litesvm)", () => {
     assert.strictEqual(
       vaultAfter.lockDuration.toNumber(),
       vaultBefore.lockDuration.toNumber()
+    );
+
+    // --- Refreshed event payload matches the state the handler wrote ---
+    // Events are public ABI for the downstream indexer; pinning every field
+    // here kills any mutation that corrupts one or drops the emit. Anchor's
+    // EventParser lower-cases the first letter of the struct name so Rust's
+    // `Refreshed` surfaces as "refreshed". The handler's lock_start field
+    // is ORIGINAL (refresh does not write it), so the event carries the
+    // pre-refresh value; lock_end and discount_end are the NEW post-refresh
+    // values; cycle_duration is the position's snapshot.
+    const refreshedEvents = decodeEventsForSignature(
+      svm,
+      program,
+      refreshSignature
+    );
+    assert.strictEqual(
+      refreshedEvents.length,
+      1,
+      "refresh tx should emit exactly one event"
+    );
+    assert.strictEqual(
+      refreshedEvents[0].name,
+      "refreshed",
+      "refresh tx event name should be 'refreshed'"
+    );
+    const refreshedData = refreshedEvents[0].data;
+    assert.ok(
+      refreshedData.user.equals(user.publicKey),
+      "Refreshed.user should equal the owner"
+    );
+    assert.ok(
+      refreshedData.vault.equals(vaultPda),
+      "Refreshed.vault should equal the vault PDA"
+    );
+    assert.strictEqual(
+      refreshedData.amount.toNumber(),
+      positionBefore.amount.toNumber(),
+      "Refreshed.amount should equal the preserved position amount"
+    );
+    assert.deepStrictEqual(
+      refreshedData.tier,
+      positionBefore.tier,
+      "Refreshed.tier should equal the tier snapshotted at lock time"
+    );
+    assert.strictEqual(
+      refreshedData.lockStart.toNumber(),
+      positionBefore.lockStart.toNumber(),
+      "Refreshed.lock_start should equal the position's immutable lock_start"
+    );
+    assert.strictEqual(
+      refreshedData.lockEnd.toNumber(),
+      positionAfter.lockEnd.toNumber(),
+      "Refreshed.lock_end should equal the new post-refresh lock_end"
+    );
+    assert.strictEqual(
+      refreshedData.discountEnd.toNumber(),
+      positionAfter.discountEnd.toNumber(),
+      "Refreshed.discount_end should equal the new post-refresh discount_end"
+    );
+    assert.strictEqual(
+      refreshedData.cycleDuration.toNumber(),
+      positionBefore.cycleDuration.toNumber(),
+      "Refreshed.cycle_duration should equal the position's immutable snapshot"
     );
   });
 
