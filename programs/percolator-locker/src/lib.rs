@@ -7,6 +7,7 @@ pub mod state;
 
 pub use instructions::initialize_vault::*;
 pub use instructions::lock::*;
+pub use instructions::refresh_lock::*;
 pub use instructions::unlock::*;
 
 declare_id!("91JU1rmiLAPNcmC9Kew8cCXTRGFW1Pe67ZreijUia5S8");
@@ -37,5 +38,9 @@ pub mod percolator_locker {
 
     pub fn unlock(ctx: Context<Unlock>) -> Result<()> {
         crate::instructions::unlock::handler(ctx)
+    }
+
+    pub fn refresh_lock(ctx: Context<RefreshLock>) -> Result<()> {
+        crate::instructions::refresh_lock::handler(ctx)
     }
 }

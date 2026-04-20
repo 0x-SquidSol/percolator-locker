@@ -19,6 +19,9 @@ pub enum LockerError {
     #[msg("The lock period has not expired yet")]
     LockNotExpired,
 
+    #[msg("The earned-discount window has already lapsed — unlock and re-lock instead of refreshing")]
+    DiscountLapsed,
+
     // === Amount errors ===
     #[msg("Lock amount must be greater than zero")]
     InvalidAmount,
