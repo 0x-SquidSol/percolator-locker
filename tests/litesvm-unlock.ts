@@ -19,6 +19,7 @@ import { LiteSVM } from "litesvm";
 import { LiteSVMProvider } from "anchor-litesvm";
 import { assert } from "chai";
 import { makeHarness, warpTo } from "../test-helpers/litesvm";
+import { decodeEventsForSignature } from "../test-helpers/events";
 import { PercolatorLocker } from "../target/types/percolator_locker";
 
 const LOCK_VAULT_SEED = Buffer.from("lock_vault");
@@ -208,17 +209,28 @@ describe("unlock (litesvm)", () => {
       USER_STARTING_BALANCE
     );
 
-    // Lock at exactly Bronze
+    // Lock at exactly Bronze. Inline the instruction (rather than using the
+    // lockTokens helper) so we can capture the tx signature and decode its
+    // Locked event below — the helper discards it.
     const amount = DEFAULT_BRONZE;
-    const lockPositionPda = await lockTokens(
-      program,
-      user,
-      vaultPda,
-      vaultTokenAccount,
-      userTokenAccount,
-      mint,
-      amount
+    const [lockPositionPda] = PublicKey.findProgramAddressSync(
+      [LOCK_POSITION_SEED, vaultPda.toBuffer(), user.publicKey.toBuffer()],
+      program.programId
     );
+    const lockSignature = await program.methods
+      .lock(new BN(amount))
+      .accountsStrict({
+        user: user.publicKey,
+        vault: vaultPda,
+        lockPosition: lockPositionPda,
+        userTokenAccount,
+        vaultTokenAccount,
+        tokenMint: mint,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([user])
+      .rpc();
 
     // Snapshot pre-unlock state
     const userTaBefore = await getAccount(
@@ -234,20 +246,82 @@ describe("unlock (litesvm)", () => {
     );
     const vaultBefore = await program.account.lockVault.fetch(vaultPda);
 
+    // --- Locked event payload matches the state we just wrote ---
+    // Events are the public ABI consumed by indexers; field-by-field
+    // assertion here kills any mutation that corrupts a field or drops
+    // the emit entirely. Anchor's EventParser lower-cases the first
+    // letter of the struct name so Rust's `Locked` surfaces as "locked".
+    const lockedEvents = decodeEventsForSignature(svm, program, lockSignature);
+    assert.strictEqual(
+      lockedEvents.length,
+      1,
+      "lock tx should emit exactly one event"
+    );
+    assert.strictEqual(
+      lockedEvents[0].name,
+      "locked",
+      "lock tx event name should be 'locked'"
+    );
+    const lockedData = lockedEvents[0].data;
+    assert.ok(
+      lockedData.user.equals(user.publicKey),
+      "Locked.user should equal the signer"
+    );
+    assert.ok(
+      lockedData.vault.equals(vaultPda),
+      "Locked.vault should equal the vault PDA"
+    );
+    assert.strictEqual(
+      lockedData.amount.toNumber(),
+      amount,
+      "Locked.amount should equal the locked amount"
+    );
+    assert.deepStrictEqual(
+      lockedData.tier,
+      { bronze: {} },
+      "Locked.tier should be the Bronze variant"
+    );
+    assert.strictEqual(
+      lockedData.lockStart.toNumber(),
+      positionBefore.lockStart.toNumber(),
+      "Locked.lock_start should match what the handler wrote to the position"
+    );
+    assert.strictEqual(
+      lockedData.lockEnd.toNumber(),
+      positionBefore.lockEnd.toNumber(),
+      "Locked.lock_end should match what the handler wrote to the position"
+    );
+    assert.strictEqual(
+      lockedData.discountEnd.toNumber(),
+      positionBefore.discountEnd.toNumber(),
+      "Locked.discount_end should match what the handler wrote to the position"
+    );
+    assert.strictEqual(
+      lockedData.cycleDuration.toNumber(),
+      DEFAULT_LOCK_DURATION,
+      "Locked.cycle_duration should equal the vault's snapshotted duration"
+    );
+
     // Advance the clock past lock_end. lock_start was ~now-at-lock-time (clock
     // auto-advances between ops), lock_end = lock_start + DEFAULT_LOCK_DURATION.
     // Jump to lock_end + 1 so the handler's `now >= lock_end` guard passes.
     warpTo(svm, BigInt(positionBefore.lockEnd.toNumber() + 1));
 
-    // Unlock
-    await unlockTokens(
-      program,
-      user,
-      vaultPda,
-      vaultTokenAccount,
-      userTokenAccount,
-      mint
-    );
+    // Unlock. Inline the instruction to capture the tx signature for the
+    // Unlocked event-payload assertion further down.
+    const unlockSignature = await program.methods
+      .unlock()
+      .accountsStrict({
+        owner: user.publicKey,
+        vault: vaultPda,
+        lockPosition: lockPositionPda,
+        userTokenAccount,
+        vaultTokenAccount,
+        tokenMint: mint,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      })
+      .signers([user])
+      .rpc();
 
     // Snapshot post-unlock state
     const userTaAfter = await getAccount(
@@ -371,6 +445,65 @@ describe("unlock (litesvm)", () => {
       vaultBefore.tokenDecimals
     );
     assert.strictEqual(vaultAfter.bump, vaultBefore.bump);
+
+    // --- Unlocked event payload matches the state the handler wrote ---
+    // The Unlocked event is intentionally 7 fields today: user, vault,
+    // amount, tier, lock_start, lock_end, discount_end. It does NOT carry
+    // cycle_duration — the Locked and Refreshed events do (making them
+    // 8 fields). Adding cycle_duration to Unlocked for triple-event
+    // symmetry is a tracked follow-up; this assertion block covers the
+    // current 7-field shape. The `amount` field carries the PRE-unlock
+    // value that was just returned to the user, even though the position's
+    // amount on chain is now zero.
+    const unlockedEvents = decodeEventsForSignature(
+      svm,
+      program,
+      unlockSignature
+    );
+    assert.strictEqual(
+      unlockedEvents.length,
+      1,
+      "unlock tx should emit exactly one event"
+    );
+    assert.strictEqual(
+      unlockedEvents[0].name,
+      "unlocked",
+      "unlock tx event name should be 'unlocked'"
+    );
+    const unlockedData = unlockedEvents[0].data;
+    assert.ok(
+      unlockedData.user.equals(user.publicKey),
+      "Unlocked.user should equal the owner"
+    );
+    assert.ok(
+      unlockedData.vault.equals(vaultPda),
+      "Unlocked.vault should equal the vault PDA"
+    );
+    assert.strictEqual(
+      unlockedData.amount.toNumber(),
+      amount,
+      "Unlocked.amount should equal the amount returned to the user"
+    );
+    assert.deepStrictEqual(
+      unlockedData.tier,
+      positionBefore.tier,
+      "Unlocked.tier should equal the tier snapshotted at lock time"
+    );
+    assert.strictEqual(
+      unlockedData.lockStart.toNumber(),
+      positionBefore.lockStart.toNumber(),
+      "Unlocked.lock_start should equal the position's immutable lock_start"
+    );
+    assert.strictEqual(
+      unlockedData.lockEnd.toNumber(),
+      positionBefore.lockEnd.toNumber(),
+      "Unlocked.lock_end should equal the position's immutable lock_end"
+    );
+    assert.strictEqual(
+      unlockedData.discountEnd.toNumber(),
+      positionBefore.discountEnd.toNumber(),
+      "Unlocked.discount_end should equal the position's immutable discount_end"
+    );
   });
 
   it("decrements counters only for the unlocking user, leaving the other position untouched", async () => {
