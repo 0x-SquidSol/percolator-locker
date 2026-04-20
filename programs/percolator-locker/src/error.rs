@@ -53,6 +53,12 @@ pub enum LockerError {
     #[msg("The earned-discount window has already lapsed — unlock and re-lock instead of refreshing")]
     DiscountLapsed,
 
+    #[msg("Config update rejected: minimum cooldown between successive update_config calls has not elapsed")]
+    ConfigCooldownActive,
+
+    #[msg("Config update rejected: requested threshold change exceeds the per-call magnitude cap")]
+    ConfigChangeOverLimit,
+
     // NOTE: append-only. Anchor auto-numbers variants by declaration position
     // (starting at 6000), so inserting mid-enum shifts every subsequent code
     // and breaks any client pinned to a specific numeric error. New variants
