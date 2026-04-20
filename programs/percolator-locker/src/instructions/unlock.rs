@@ -6,9 +6,10 @@ use crate::error::LockerError;
 use crate::state::{LockPosition, LockVault, Tier};
 
 /// Returns the user's locked tokens once the 30-day cycle has elapsed and marks
-/// the position inactive while preserving `tier` and `discount_end` — the matcher
-/// reads those fields for the earned-discount window that runs `lock_duration`
-/// past `lock_end`.
+/// the position inactive while preserving `tier`, `discount_end`, and
+/// `cycle_duration` — the matcher reads tier + discount_end for the earned-discount
+/// window that runs `cycle_duration` past `lock_end`, and cycle_duration itself
+/// is immutable for the position's life so `refresh_lock` can rely on the snapshot.
 pub fn handler(ctx: Context<Unlock>) -> Result<()> {
     // Guard: the position must currently hold tokens. This blocks replayed
     // unlocks against an already-retired position.
@@ -64,8 +65,9 @@ pub fn handler(ctx: Context<Unlock>) -> Result<()> {
     )?;
 
     // Retire the position: zero the amount, flip the flag. Keep tier,
-    // discount_end, owner, vault, lock_start, lock_end, and bump untouched —
-    // the matcher needs tier + discount_end readable until discount_end elapses.
+    // discount_end, owner, vault, lock_start, lock_end, bump, and cycle_duration
+    // untouched — the matcher needs tier + discount_end readable until discount_end
+    // elapses, and cycle_duration must survive for refresh_lock's snapshot guarantee.
     let lock_position = &mut ctx.accounts.lock_position;
     lock_position.amount = 0;
     lock_position.is_active = false;
@@ -124,11 +126,11 @@ pub struct Unlock<'info> {
     pub vault: Account<'info, LockVault>,
 
     /// The user's existing lock position. mut because the handler sets is_active
-    /// = false and zeroes amount (preserving tier and discount_end). Seeds +
-    /// stored bump re-derive the canonical PDA; has_one = vault and has_one =
-    /// owner defend against cross-vault and cross-user tampering, since seeds
-    /// are only checked at init time — subsequent mutations deserialize by
-    /// address alone without explicit has_one.
+    /// = false and zeroes amount (preserving tier, discount_end, and
+    /// cycle_duration). Seeds + stored bump re-derive the canonical PDA;
+    /// has_one = vault and has_one = owner defend against cross-vault and
+    /// cross-user tampering, since seeds are only checked at init time —
+    /// subsequent mutations deserialize by address alone without explicit has_one.
     #[account(
         mut,
         seeds = [LOCK_POSITION_SEED, vault.key().as_ref(), owner.key().as_ref()],
