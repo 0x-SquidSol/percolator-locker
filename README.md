@@ -26,9 +26,9 @@ Every 30-day lock earns you 30 days of trading fee discount. The discount is alw
 1. Connect your wallet on the Percolator site
 2. Choose how many tokens to lock
 3. Tokens are transferred to the program's vault and locked for 30 days
-4. After 30 days, your discount activates — re-lock to keep earning more discount time
-5. If you stop re-locking, your earned discount still runs for 30 more days
-6. To change your lock amount, withdraw and start a new lock (30-day wait resets)
+4. After 30 days, your discount activates — refresh your lock to keep earning more discount time
+5. If you stop refreshing, your earned discount still runs for 30 more days
+6. One lock per wallet per vault — after unlocking, that wallet's position for this vault is retired.
 
 ## Governance & Parameter Updates
 
