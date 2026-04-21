@@ -741,7 +741,7 @@ describe("percolator-locker", () => {
           (err?.logs?.join(" ") ?? "");
         assert.match(
           msg,
-          /insufficient funds|0x1\b/i,
+          /insufficient funds/i,
           `unexpected error: ${msg}`
         );
       }

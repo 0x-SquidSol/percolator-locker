@@ -1050,14 +1050,13 @@ describe("lifecycle (litesvm)", () => {
     );
 
     // Try to lock again. `init` on the PDA must fail because the account
-    // already exists. We don't pin the exact error string (Anchor phrases
-    // account-already-in-use slightly differently across minor versions);
-    // what matters is that the call rejects and leaves the retired
-    // position byte-identical to its post-unlock state. Fresh blockhash
-    // immediately before the guarded tx, matching the pattern used
-    // elsewhere in this file.
+    // already exists. Pin the rejection reason with the same tolerant
+    // regex the init-collision tests in percolator-locker.ts use, so a
+    // regression that fails for an unrelated reason (blockhash, CPI
+    // panic, constraint mismatch) no longer satisfies this assertion.
+    // Fresh blockhash immediately before the guarded tx, matching the
+    // pattern used elsewhere in this file.
     svm.expireBlockhash();
-    let rejectedAsExpected = false;
     try {
       await lockTokens(
         program,
@@ -1068,13 +1067,20 @@ describe("lifecycle (litesvm)", () => {
         mint,
         DEFAULT_BRONZE
       );
-    } catch (err) {
-      rejectedAsExpected = true;
+      assert.fail(
+        "lock must reject: the LockPosition PDA for this (vault, user) already exists from the prior lock"
+      );
+    } catch (err: any) {
+      const msg =
+        (err?.toString?.() ?? String(err)) +
+        " " +
+        (err?.logs?.join(" ") ?? "");
+      assert.match(
+        msg,
+        /already in use|already initialized/i,
+        `unexpected error: ${msg}`
+      );
     }
-    assert.ok(
-      rejectedAsExpected,
-      "lock must reject: the LockPosition PDA for this (vault, user) already exists from the prior lock"
-    );
 
     // Retired position survives the failed re-lock — discount_end, tier,
     // cycle_duration all unchanged from the post-unlock snapshot. Matcher
