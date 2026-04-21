@@ -41,6 +41,14 @@ The vault has an admin key that can adjust the three tier thresholds and the loc
 
 The vault's custody fields (token mint, vault token account, admin pubkey, locker count, total locked) are never touched by a configuration update.
 
+## For Integrators
+
+`initialize_vault` is permissionless: any signer can derive their own `LockVault` PDA at seeds `[b"lock_vault", admin]`, pointing at any SPL mint with any tier thresholds. Multiple vaults therefore coexist under this program ID, and their `Locked`, `Refreshed`, and `Unlocked` events are structurally identical to the canonical Percolator vault's. Only one vault is canonical; the rest are inert from the protocol's perspective.
+
+Fund safety is unaffected — each vault custodies its own `vault_token_account`, and a spoof vault cannot touch the canonical vault's tokens. The concern is off-chain: indexers, fee-discount matchers, dashboards, and UIs **must filter by the canonical `LockVault` pubkey**. Filtering by program ID alone will ingest spoof-vault events as real volume and may credit spoof tiers to users.
+
+The canonical vault pubkey will be published in this README alongside the mainnet deployment. Do not hardcode any other address.
+
 ## Build & Test
 
 Requires [Anchor](https://www.anchor-lang.com/) and [Solana CLI](https://docs.solanalabs.com/cli/install).

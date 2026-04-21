@@ -98,6 +98,10 @@ pub fn handler(ctx: Context<Unlock>) -> Result<()> {
     Ok(())
 }
 
+/// Emitted on every successful `unlock`. As with `Locked`, the `vault`
+/// field is the canonicality pin — consumers MUST filter on a specific
+/// vault pubkey rather than trusting the program ID alone. See `Locked`
+/// for the full rationale.
 #[event]
 pub struct Unlocked {
     pub user: Pubkey,

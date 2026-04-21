@@ -100,6 +100,13 @@ pub fn handler(ctx: Context<Lock>, amount: u64) -> Result<()> {
     Ok(())
 }
 
+/// Emitted on every successful `lock`.
+///
+/// The `vault` field is the canonicality pin: because `initialize_vault` is
+/// permissionless, this program emits `Locked` events from every `LockVault`
+/// that exists under its ID. Event consumers MUST filter on a specific
+/// canonical vault pubkey — filtering by program ID alone admits spoof
+/// events from uncontrolled vaults. See `LockVault` for the full rationale.
 #[event]
 pub struct Locked {
     pub user: Pubkey,

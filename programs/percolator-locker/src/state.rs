@@ -26,6 +26,16 @@ impl Default for Tier {
     }
 }
 
+/// Per-vault configuration and aggregate accounting.
+///
+/// `initialize_vault` is permissionless — the PDA is seeded by
+/// `[b"lock_vault", admin]`, so any signer can create their own `LockVault`
+/// pointing at any mint with arbitrary tier thresholds. Only one deployed
+/// vault is the canonical Percolator vault; the rest are uncontrolled
+/// look-alikes. Off-chain consumers (indexers, matchers, UIs) must pin to
+/// the canonical vault's pubkey rather than treating every `LockVault`
+/// under this program as authoritative. See the README for the canonical
+/// pubkey once mainnet is deployed.
 #[account]
 pub struct LockVault {
     /// Program admin — can update tier thresholds and lock duration

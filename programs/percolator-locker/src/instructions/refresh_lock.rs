@@ -96,7 +96,9 @@ pub fn handler(ctx: Context<RefreshLock>) -> Result<()> {
 /// Emitted on every successful `refresh_lock`. Carries the same 8-field
 /// shape as `Locked` so indexers can treat the two events symmetrically —
 /// each represents a commitment that re-anchors `lock_end` and extends
-/// `discount_end` by one cycle.
+/// `discount_end` by one cycle. As with `Locked`, the `vault` field is the
+/// canonicality pin — consumers MUST filter on a specific vault pubkey
+/// rather than trusting the program ID alone.
 #[event]
 pub struct Refreshed {
     pub user: Pubkey,
