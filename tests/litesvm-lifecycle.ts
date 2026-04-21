@@ -970,7 +970,6 @@ describe("lifecycle (litesvm)", () => {
     );
     // A's retired position is byte-identical to the moment after A's unlock —
     // B's unlock can't reach across to A's position.
-    const positionA4Buf = await program.account.lockPosition.fetch(positionAPda);
     assert.strictEqual(
       positionA4.discountEnd.toNumber(),
       positionA3.discountEnd.toNumber(),
@@ -982,7 +981,7 @@ describe("lifecycle (litesvm)", () => {
       "A's retained tier unchanged by B's later unlock"
     );
     assert.strictEqual(
-      positionA4Buf.isActive,
+      positionA4.isActive,
       false,
       "A remains retired"
     );
@@ -1040,7 +1039,6 @@ describe("lifecycle (litesvm)", () => {
       userTokenAccount,
       mint
     );
-    svm.expireBlockhash();
 
     const positionAfterUnlock = await program.account.lockPosition.fetch(
       lockPositionPda
@@ -1055,7 +1053,10 @@ describe("lifecycle (litesvm)", () => {
     // already exists. We don't pin the exact error string (Anchor phrases
     // account-already-in-use slightly differently across minor versions);
     // what matters is that the call rejects and leaves the retired
-    // position byte-identical to its post-unlock state.
+    // position byte-identical to its post-unlock state. Fresh blockhash
+    // immediately before the guarded tx, matching the pattern used
+    // elsewhere in this file.
+    svm.expireBlockhash();
     let rejectedAsExpected = false;
     try {
       await lockTokens(
