@@ -26,6 +26,41 @@ impl Default for Tier {
     }
 }
 
+impl Tier {
+    /// Trading-fee discount in basis points (1 bp = 0.01%).
+    ///
+    /// This is the single canonical source for the tier → discount mapping;
+    /// downstream consumers (the matcher's fee path, indexers, UIs) must
+    /// call this rather than re-deriving the numbers. Values are protocol
+    /// policy — not admin-adjustable — and must stay in sync with the
+    /// percentages documented in the README's "Fee Discount Tiers" table.
+    ///
+    /// Returns `u64` to match the fee-math width used downstream; the
+    /// logical maximum is 10_000 (100%).
+    #[inline]
+    pub fn discount_bps(&self) -> u64 {
+        match self {
+            Tier::None => 0,
+            Tier::Bronze => 1_000,
+            Tier::Silver => 2_000,
+            Tier::Gold => 3_000,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tier_tests {
+    use super::Tier;
+
+    #[test]
+    fn discount_bps_matches_readme_table() {
+        assert_eq!(Tier::None.discount_bps(), 0);
+        assert_eq!(Tier::Bronze.discount_bps(), 1_000);
+        assert_eq!(Tier::Silver.discount_bps(), 2_000);
+        assert_eq!(Tier::Gold.discount_bps(), 3_000);
+    }
+}
+
 /// Per-vault configuration and aggregate accounting.
 ///
 /// `initialize_vault` is permissionless — the PDA is seeded by
