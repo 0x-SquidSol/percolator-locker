@@ -47,6 +47,8 @@ The vault's custody fields (token mint, vault token account, admin pubkey, locke
 
 Fund safety is unaffected — each vault custodies its own `vault_token_account`, and a spoof vault cannot touch the canonical vault's tokens. The concern is off-chain: indexers, fee-discount matchers, dashboards, and UIs **must filter by the canonical `LockVault` pubkey**. Filtering by program ID alone will ingest spoof-vault events as real volume and may credit spoof tiers to users.
 
+**Program ID:** `91JU1rmiLAPNcmC9Kew8cCXTRGFW1Pe67ZreijUia5S8` (current `declare_id!`; subject to change until mainnet deployment is finalized).
+
 The canonical vault pubkey will be published in this README alongside the mainnet deployment. Do not hardcode any other address.
 
 ## Build & Test
