@@ -68,6 +68,9 @@ pub enum LockerError {
     #[msg("Config update rejected: at least one field must be supplied — an empty call would burn the cooldown for no state change")]
     EmptyConfigUpdate,
 
+    #[msg("Tier bronze threshold is below the minimum allowed floor")]
+    TierBronzeBelowMinimum,
+
     // NOTE: append-only. Anchor auto-numbers variants by declaration position
     // (starting at 6000), so inserting mid-enum shifts every subsequent code
     // and breaks any client pinned to a specific numeric error. New variants

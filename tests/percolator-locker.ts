@@ -354,7 +354,7 @@ describe("percolator-locker", () => {
       }
     });
 
-    it("rejects tier_bronze = 0", async () => {
+    it("rejects tier_bronze below MIN_TIER_BRONZE", async () => {
       const { admin, mint } = await setupAdmin();
       try {
         await initVault(admin, mint, {
@@ -362,12 +362,12 @@ describe("percolator-locker", () => {
           silver: DEFAULT_SILVER,
           gold: DEFAULT_GOLD,
         });
-        assert.fail("expected InvalidTierThresholds");
+        assert.fail("expected TierBronzeBelowMinimum");
       } catch (err: any) {
         assert.strictEqual(
           err.error?.errorCode?.code,
-          "InvalidTierThresholds",
-          `expected InvalidTierThresholds, got: ${err?.toString?.() ?? err}`
+          "TierBronzeBelowMinimum",
+          `expected TierBronzeBelowMinimum, got: ${err?.toString?.() ?? err}`
         );
       }
     });

@@ -11,6 +11,15 @@ pub(crate) const MIN_LOCK_DURATION: u64 = 86_400;
 /// Maximum allowed lock duration: 1 year in seconds (prevents unreasonable lock periods)
 pub(crate) const MAX_LOCK_DURATION: u64 = 31_536_000;
 
+/// Minimum allowed Bronze tier threshold, in token base units. Rejects
+/// pathologically small init configs (e.g. `(1, 2, 3)`) that would make
+/// Gold tier essentially free — a fat-finger admin would otherwise need
+/// ~32 weeks of 7-day-spaced `update_config` calls to climb back to a
+/// realistic floor, since the 50% per-call cap only allows 1.5x weekly
+/// growth. Silver and Gold inherit this floor through the existing
+/// strict-ascending ordering checks.
+pub(crate) const MIN_TIER_BRONZE: u64 = 1_000;
+
 pub fn handler(
     ctx: Context<InitializeVault>,
     lock_duration: u64,
@@ -28,8 +37,13 @@ pub fn handler(
         LockerError::LockDurationTooLong
     );
 
-    // Validate tier thresholds: all positive and strictly ascending
-    require!(tier_bronze > 0, LockerError::InvalidTierThresholds);
+    // Validate tier thresholds: bronze above floor, strictly ascending.
+    // The floor catches fat-finger inits (e.g. `(1, 2, 3)`); silver and gold
+    // inherit the floor via the ordering checks below.
+    require!(
+        tier_bronze >= MIN_TIER_BRONZE,
+        LockerError::TierBronzeBelowMinimum
+    );
     require!(tier_silver > tier_bronze, LockerError::InvalidTierThresholds);
     require!(tier_gold > tier_silver, LockerError::InvalidTierThresholds);
 

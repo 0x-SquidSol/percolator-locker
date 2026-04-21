@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 
 use crate::error::LockerError;
-use crate::instructions::initialize_vault::{MAX_LOCK_DURATION, MIN_LOCK_DURATION};
+use crate::instructions::initialize_vault::{MAX_LOCK_DURATION, MIN_LOCK_DURATION, MIN_TIER_BRONZE};
 use crate::state::LockVault;
 
 /// Minimum seconds that must elapse between successive successful
@@ -37,7 +37,7 @@ pub const CONFIG_UPDATE_COOLDOWN_SECS: i64 = 7 * 24 * 60 * 60;
 ///   stuck at 1 is not frozen forever by integer-division truncating
 ///   `1 / 2` to 0.
 /// - `lock_duration` bounds: final value in `[MIN_LOCK_DURATION, MAX_LOCK_DURATION]`.
-/// - Tier invariants on the FINAL state: `bronze > 0`, `bronze < silver < gold`.
+/// - Tier invariants on the FINAL state: `bronze >= MIN_TIER_BRONZE`, `bronze < silver < gold`.
 ///
 /// Existing `LockPosition`s are immune to config changes by design: each
 /// position's `tier` and `cycle_duration` are snapshotted at lock time
@@ -132,8 +132,14 @@ pub fn handler(
         LockerError::LockDurationTooLong
     );
 
-    // Guard: tier ordering and positivity on the FINAL state.
-    require!(final_bronze > 0, LockerError::InvalidTierThresholds);
+    // Guard: tier floor and ordering on the FINAL state. The 50% per-call cap
+    // above slows descent but does not block it, so the MIN_TIER_BRONZE floor
+    // must be enforced here too (not only at init) — otherwise a compromised
+    // admin could walk bronze toward the `.max(1)` cap-floor over many calls.
+    require!(
+        final_bronze >= MIN_TIER_BRONZE,
+        LockerError::TierBronzeBelowMinimum
+    );
     require!(
         final_silver > final_bronze,
         LockerError::InvalidTierThresholds

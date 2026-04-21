@@ -496,20 +496,19 @@ describe("update_config (litesvm)", () => {
     assert.strictEqual(vault.tierBronze.toNumber(), target);
   });
 
-  it("cap floors at 1 so a threshold stuck at 1 can still escape", async () => {
-    // Regression test for the (old / 2).max(1) fix: without the floor, old=1
-    // produces a cap of 0 which permanently freezes the threshold at 1.
+  it("MIN_TIER_BRONZE floor rejects escape from a below-minimum pathological state", async () => {
+    // A vault pathologically stuck at bronze=1 (only reachable via setVaultState
+    // injection; init and update_config's final-state check both reject any
+    // bronze below MIN_TIER_BRONZE) can still pass the (old/2).max(1) per-call
+    // cap for a +1 move, but the final-state floor rejects the resulting
+    // bronze=2 because 2 < MIN_TIER_BRONZE. The cap + floor together prevent
+    // small-threshold states from escaping through repeated update_config calls.
     const { svm, provider, program } = makeHarness();
     const admin = setupAdmin(svm);
-    // Warp past COOLDOWN_SECS so the first update_config call is unrestricted,
-    // as the handler's doc-comment promises (relies on mainnet-realistic `now`).
     warpTo(svm, INITIAL_WARP_TS);
     const mint = await createTestMint(svm, provider, admin);
     const { vaultPda } = await initVault(program, admin, mint);
 
-    // Force bronze=1 on-chain via account rewrite (init rejects silver==bronze
-    // ordering violations at init-time so can't pass bronze=1 through
-    // initializeVault alongside the default silver/gold).
     await setVaultState(svm, program, vaultPda, (vault) => {
       vault.tierBronze = new BN(1);
       vault.tierSilver = new BN(2);
@@ -517,20 +516,20 @@ describe("update_config (litesvm)", () => {
     });
     svm.expireBlockhash();
 
-    // With the floor, cap = max(1/2, 1) = 1, so new_bronze = 2 is reachable
-    // (abs_diff(2, 1) = 1 <= 1). Without the floor, cap would be 0 and this
-    // call would fire ConfigChangeOverLimit.
-    await updateConfig(program, admin, vaultPda, {
-      bronze: 2,
-      silver: 3,
-      gold: 4,
-    });
-    const vault = await program.account.lockVault.fetch(vaultPda);
-    assert.strictEqual(
-      vault.tierBronze.toNumber(),
-      2,
-      "bronze should escape 1 with the .max(1) cap floor"
-    );
+    try {
+      await updateConfig(program, admin, vaultPda, {
+        bronze: 2,
+        silver: 3,
+        gold: 4,
+      });
+      assert.fail("expected TierBronzeBelowMinimum");
+    } catch (err: any) {
+      assert.strictEqual(
+        err.error?.errorCode?.code,
+        "TierBronzeBelowMinimum",
+        `expected TierBronzeBelowMinimum, got: ${err?.toString?.() ?? err}`
+      );
+    }
   });
 
   it("new lock after an update_config uses the new cycle_duration snapshot", async () => {
@@ -967,14 +966,13 @@ describe("update_config (litesvm)", () => {
     }
   });
 
-  it("rejects a final state where bronze == 0 (InvalidTierThresholds)", async () => {
-    // The bronze > 0 guard is a distinct require! from the ordering guards.
+  it("rejects a final state where bronze == 0 (TierBronzeBelowMinimum)", async () => {
     // Reaching bronze=0 requires bronze currently at 1 (cap = max(0,1) = 1
-    // allows delta of 1 down to 0). Simulate vault state where bronze is 1.
+    // allows delta of 1 down to 0). Simulate that pathological pre-state via
+    // setVaultState, then attempt update to 0 — the MIN_TIER_BRONZE final-state
+    // floor rejects before the ordering checks can fire.
     const { svm, provider, program } = makeHarness();
     const admin = setupAdmin(svm);
-    // Warp past COOLDOWN_SECS so the first update_config call is unrestricted,
-    // as the handler's doc-comment promises (relies on mainnet-realistic `now`).
     warpTo(svm, INITIAL_WARP_TS);
     const mint = await createTestMint(svm, provider, admin);
     const { vaultPda } = await initVault(program, admin, mint);
@@ -988,12 +986,12 @@ describe("update_config (litesvm)", () => {
 
     try {
       await updateConfig(program, admin, vaultPda, { bronze: 0 });
-      assert.fail("expected InvalidTierThresholds (bronze == 0)");
+      assert.fail("expected TierBronzeBelowMinimum (bronze == 0)");
     } catch (err: any) {
       assert.strictEqual(
         err.error?.errorCode?.code,
-        "InvalidTierThresholds",
-        `expected InvalidTierThresholds (bronze == 0), got: ${
+        "TierBronzeBelowMinimum",
+        `expected TierBronzeBelowMinimum (bronze == 0), got: ${
           err?.toString?.() ?? err
         }`
       );
