@@ -3,13 +3,16 @@ use anchor_lang::prelude::*;
 #[error_code]
 pub enum LockerError {
     // === Permission errors ===
+    /// Reserved. Anchor `has_one = admin` surfaces first.
     #[msg("Only the vault admin can perform this action")]
     Unauthorized,
 
+    /// Reserved. Anchor `has_one = owner` on lock_position surfaces first.
     #[msg("This lock position does not belong to you")]
     NotOwner,
 
     // === Lock state errors ===
+    /// Reserved. Anchor `init` on lock_position surfaces first (system-program: account already in use).
     #[msg("You already have an active lock — unlock first to start a new one")]
     PositionAlreadyActive,
 
@@ -37,12 +40,15 @@ pub enum LockerError {
     LockDurationTooLong,
 
     // === Account mismatch errors ===
+    /// Reserved. Anchor `has_one = vault` on lock_position surfaces first.
     #[msg("The lock position does not belong to this vault")]
     VaultMismatch,
 
+    /// Reserved. Anchor `has_one = token_mint` on vault surfaces first.
     #[msg("Token mint does not match the vault's configured mint")]
     WrongTokenMint,
 
+    /// Reserved. Anchor `has_one = vault_token_account` on vault surfaces first.
     #[msg("Vault token account does not match the vault's stored account")]
     WrongVaultTokenAccount,
 
