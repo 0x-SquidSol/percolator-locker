@@ -640,4 +640,112 @@ describe("lifecycle (litesvm)", () => {
       "post-refresh runway past unlock equals one cycle_duration"
     );
   });
+
+  it("rejects unlock in the window between the original and refreshed lock_end", async () => {
+    // Pins that the unlock handler's time guard reads the refreshed
+    // lock_end from live position state, not a stale pre-refresh value.
+    // Without this test, a refactor that cached lock_end somewhere else
+    // (e.g., mirrored it onto the vault for indexing, or snapshotted it
+    // at the top of the handler alongside the other cached-for-event
+    // fields) could read the old value and silently accept unlocks in
+    // the window after the original lock_end but before the refreshed
+    // lock_end. State at that warp would then be corrupted without any
+    // existing test catching it.
+    const { svm, provider, program } = makeHarness();
+    const admin = setupAdmin(svm);
+    const mint = await createTestMint(svm, provider, admin);
+    const { vaultPda, vaultTokenAccount } = await initVault(
+      program,
+      admin,
+      mint
+    );
+    const { user, userTokenAccount } = await setupUser(
+      svm,
+      provider,
+      mint,
+      admin,
+      USER_STARTING_BALANCE
+    );
+
+    const lockPositionPda = await lockTokens(
+      program,
+      user,
+      vaultPda,
+      vaultTokenAccount,
+      userTokenAccount,
+      mint,
+      DEFAULT_BRONZE
+    );
+    const positionAtLock = await program.account.lockPosition.fetch(
+      lockPositionPda
+    );
+    const originalLockEnd = positionAtLock.lockEnd.toNumber();
+
+    // Refresh at the original lock_end, moving the guard to
+    // originalLockEnd + cycle_duration.
+    warpTo(svm, BigInt(originalLockEnd));
+    svm.expireBlockhash();
+    await refreshLock(program, user, vaultPda);
+    const positionAfterRefresh = await program.account.lockPosition.fetch(
+      lockPositionPda
+    );
+    const refreshedLockEnd = positionAfterRefresh.lockEnd.toNumber();
+    assert.strictEqual(
+      refreshedLockEnd,
+      originalLockEnd + DEFAULT_LOCK_DURATION,
+      "refresh should have advanced lock_end by exactly one cycle"
+    );
+
+    // Warp ONE second past the original lock_end — inside the window
+    // (originalLockEnd, refreshedLockEnd). A correct handler reads the
+    // refreshed lock_end from live state and rejects. A broken handler
+    // reading the pre-refresh value would see `now >= originalLockEnd`
+    // and accept.
+    warpTo(svm, BigInt(originalLockEnd + 1));
+    svm.expireBlockhash();
+
+    try {
+      await unlockTokens(
+        program,
+        user,
+        vaultPda,
+        vaultTokenAccount,
+        userTokenAccount,
+        mint
+      );
+      assert.fail(
+        "expected LockNotExpired — the unlock handler must read the refreshed lock_end"
+      );
+    } catch (err: any) {
+      assert.strictEqual(
+        err.error?.errorCode?.code,
+        "LockNotExpired",
+        `expected LockNotExpired, got: ${err?.toString?.() ?? err}`
+      );
+    }
+
+    // Position is still active and untouched — the failed tx rolled back.
+    const positionAfterFailedUnlock =
+      await program.account.lockPosition.fetch(lockPositionPda);
+    assert.strictEqual(
+      positionAfterFailedUnlock.isActive,
+      true,
+      "position should remain active after the rejected unlock"
+    );
+    assert.strictEqual(
+      positionAfterFailedUnlock.amount.toNumber(),
+      positionAtLock.amount.toNumber(),
+      "amount should remain at the locked value"
+    );
+    assert.strictEqual(
+      positionAfterFailedUnlock.lockEnd.toNumber(),
+      refreshedLockEnd,
+      "lock_end should remain at the refreshed value"
+    );
+    assert.strictEqual(
+      positionAfterFailedUnlock.discountEnd.toNumber(),
+      positionAfterRefresh.discountEnd.toNumber(),
+      "discount_end should remain at the refreshed value"
+    );
+  });
 });
