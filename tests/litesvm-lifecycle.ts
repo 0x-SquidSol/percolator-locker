@@ -748,4 +748,362 @@ describe("lifecycle (litesvm)", () => {
       "discount_end should remain at the refreshed value"
     );
   });
+
+  it("two lockers progress through refresh and unlock independently", async () => {
+    // Pins cross-user isolation across the full lifecycle: every handler
+    // operation on user A's position must leave user B's position and user
+    // B's token balance byte-identical, and vice versa. Vault counters
+    // should reflect the combined state of both users at every step.
+    const { svm, provider, program } = makeHarness();
+    const admin = setupAdmin(svm);
+    const mint = await createTestMint(svm, provider, admin);
+    const { vaultPda, vaultTokenAccount } = await initVault(
+      program,
+      admin,
+      mint
+    );
+    const { user: userA, userTokenAccount: taA } = await setupUser(
+      svm,
+      provider,
+      mint,
+      admin,
+      USER_STARTING_BALANCE
+    );
+    const { user: userB, userTokenAccount: taB } = await setupUser(
+      svm,
+      provider,
+      mint,
+      admin,
+      USER_STARTING_BALANCE
+    );
+
+    // User A locks at Bronze, user B locks at Silver. Different amounts so
+    // tier classifications differ too — cross-user contamination would
+    // show up in the counters or in either user's tier/amount fields.
+    const amountA = DEFAULT_BRONZE;
+    const amountB = DEFAULT_SILVER * 2; // 2_000_000 → Silver
+    const positionAPda = await lockTokens(
+      program,
+      userA,
+      vaultPda,
+      vaultTokenAccount,
+      taA,
+      mint,
+      amountA
+    );
+    const positionBPda = await lockTokens(
+      program,
+      userB,
+      vaultPda,
+      vaultTokenAccount,
+      taB,
+      mint,
+      amountB
+    );
+    const positionA0 = await program.account.lockPosition.fetch(positionAPda);
+    const positionB0 = await program.account.lockPosition.fetch(positionBPda);
+    const vault0 = await program.account.lockVault.fetch(vaultPda);
+    assert.strictEqual(
+      vault0.totalLocked.toNumber(),
+      amountA + amountB,
+      "vault.total_locked should equal the sum of both locks"
+    );
+    assert.strictEqual(
+      vault0.totalLockers.toNumber(),
+      2,
+      "vault.total_lockers should be 2 after two users lock"
+    );
+    assert.deepStrictEqual(
+      positionA0.tier,
+      { bronze: {} },
+      "A classifies as Bronze at 500_000"
+    );
+    assert.deepStrictEqual(
+      positionB0.tier,
+      { silver: {} },
+      "B classifies as Silver at 2_000_000"
+    );
+
+    // A refreshes at its lock_end. B's position and B's token balance
+    // must be byte-identical afterward.
+    warpTo(svm, BigInt(positionA0.lockEnd.toNumber()));
+    svm.expireBlockhash();
+    await refreshLock(program, userA, vaultPda);
+    const positionA1 = await program.account.lockPosition.fetch(positionAPda);
+    const positionB1 = await program.account.lockPosition.fetch(positionBPda);
+    const taB_after_A_refresh = await getAccount(provider.connection, taB);
+    assert.strictEqual(
+      positionA1.lockEnd.toNumber(),
+      positionA0.lockEnd.toNumber() + DEFAULT_LOCK_DURATION,
+      "A's lock_end advanced by one cycle"
+    );
+    assert.strictEqual(
+      positionB1.lockEnd.toNumber(),
+      positionB0.lockEnd.toNumber(),
+      "B's lock_end unaffected by A's refresh"
+    );
+    assert.strictEqual(
+      positionB1.discountEnd.toNumber(),
+      positionB0.discountEnd.toNumber(),
+      "B's discount_end unaffected"
+    );
+    assert.strictEqual(
+      positionB1.amount.toNumber(),
+      positionB0.amount.toNumber(),
+      "B's amount unaffected"
+    );
+    assert.deepStrictEqual(
+      positionB1.tier,
+      positionB0.tier,
+      "B's tier unaffected"
+    );
+    assert.strictEqual(
+      taB_after_A_refresh.amount,
+      BigInt(USER_STARTING_BALANCE - amountB),
+      "B's token balance unaffected by A's refresh"
+    );
+
+    // B refreshes at its own lock_end. A's post-refresh state must stay intact.
+    warpTo(svm, BigInt(positionB0.lockEnd.toNumber()));
+    svm.expireBlockhash();
+    await refreshLock(program, userB, vaultPda);
+    const positionA2 = await program.account.lockPosition.fetch(positionAPda);
+    const positionB2 = await program.account.lockPosition.fetch(positionBPda);
+    assert.strictEqual(
+      positionB2.lockEnd.toNumber(),
+      positionB0.lockEnd.toNumber() + DEFAULT_LOCK_DURATION,
+      "B's lock_end advanced by one cycle"
+    );
+    assert.strictEqual(
+      positionA2.lockEnd.toNumber(),
+      positionA1.lockEnd.toNumber(),
+      "A's post-refresh lock_end unchanged by B's refresh"
+    );
+    assert.strictEqual(
+      positionA2.discountEnd.toNumber(),
+      positionA1.discountEnd.toNumber(),
+      "A's post-refresh discount_end unchanged by B's refresh"
+    );
+
+    // A unlocks at its refreshed lock_end. B's position stays active with
+    // its full state. Vault counters drop by A's contribution only.
+    warpTo(svm, BigInt(positionA1.lockEnd.toNumber()));
+    svm.expireBlockhash();
+    const taA_before_A_unlock = await getAccount(provider.connection, taA);
+    const taB_before_A_unlock = await getAccount(provider.connection, taB);
+    await unlockTokens(
+      program,
+      userA,
+      vaultPda,
+      vaultTokenAccount,
+      taA,
+      mint
+    );
+    const positionA3 = await program.account.lockPosition.fetch(positionAPda);
+    const positionB3 = await program.account.lockPosition.fetch(positionBPda);
+    const vault3 = await program.account.lockVault.fetch(vaultPda);
+    const taA_after_A_unlock = await getAccount(provider.connection, taA);
+    const taB_after_A_unlock = await getAccount(provider.connection, taB);
+    assert.strictEqual(
+      positionA3.isActive,
+      false,
+      "A retired after A's unlock"
+    );
+    assert.strictEqual(
+      positionB3.isActive,
+      true,
+      "B still active after A's unlock"
+    );
+    assert.strictEqual(
+      positionB3.amount.toNumber(),
+      positionB2.amount.toNumber(),
+      "B's amount unchanged"
+    );
+    assert.strictEqual(
+      positionB3.lockEnd.toNumber(),
+      positionB2.lockEnd.toNumber(),
+      "B's lock_end unchanged"
+    );
+    assert.strictEqual(
+      vault3.totalLocked.toNumber(),
+      amountB,
+      "total_locked drops to B's amount only"
+    );
+    assert.strictEqual(
+      vault3.totalLockers.toNumber(),
+      1,
+      "total_lockers drops to 1 (B)"
+    );
+    assert.strictEqual(
+      taA_after_A_unlock.amount - taA_before_A_unlock.amount,
+      BigInt(amountA),
+      "A's token balance increases by A's locked amount"
+    );
+    assert.strictEqual(
+      taB_after_A_unlock.amount,
+      taB_before_A_unlock.amount,
+      "B's token balance unchanged by A's unlock"
+    );
+
+    // B unlocks at its refreshed lock_end. Final vault counters at zero.
+    warpTo(svm, BigInt(positionB2.lockEnd.toNumber()));
+    svm.expireBlockhash();
+    await unlockTokens(
+      program,
+      userB,
+      vaultPda,
+      vaultTokenAccount,
+      taB,
+      mint
+    );
+    const vault4 = await program.account.lockVault.fetch(vaultPda);
+    const positionA4 = await program.account.lockPosition.fetch(positionAPda);
+    assert.strictEqual(
+      vault4.totalLocked.toNumber(),
+      0,
+      "total_locked at zero after both unlocks"
+    );
+    assert.strictEqual(
+      vault4.totalLockers.toNumber(),
+      0,
+      "total_lockers at zero after both unlocks"
+    );
+    // A's retired position is byte-identical to the moment after A's unlock —
+    // B's unlock can't reach across to A's position.
+    const positionA4Buf = await program.account.lockPosition.fetch(positionAPda);
+    assert.strictEqual(
+      positionA4.discountEnd.toNumber(),
+      positionA3.discountEnd.toNumber(),
+      "A's retained discount_end unchanged by B's later unlock"
+    );
+    assert.deepStrictEqual(
+      positionA4.tier,
+      positionA3.tier,
+      "A's retained tier unchanged by B's later unlock"
+    );
+    assert.strictEqual(
+      positionA4Buf.isActive,
+      false,
+      "A remains retired"
+    );
+  });
+
+  it("cannot re-lock after unlock: the LockPosition PDA persists post-unlock", async () => {
+    // The earned-discount model keeps the retired LockPosition account
+    // alive so the matcher can keep reading tier and discount_end until
+    // discount_end elapses. A side effect: `lock` uses `init` on a PDA
+    // seeded by (vault, user), so once that PDA exists, no future `lock`
+    // call by the same user against the same vault can succeed — the
+    // account-already-in-use failure fires before the handler runs.
+    //
+    // This test pins that invariant: a regression that switched `lock`'s
+    // constraint to `init_if_needed` (or introduced a close_position
+    // instruction without care) would silently let a user re-lock and
+    // overwrite their just-earned discount_end runway. The failure here
+    // is the current design's deliberate contract, not a bug.
+    const { svm, provider, program } = makeHarness();
+    const admin = setupAdmin(svm);
+    const mint = await createTestMint(svm, provider, admin);
+    const { vaultPda, vaultTokenAccount } = await initVault(
+      program,
+      admin,
+      mint
+    );
+    const { user, userTokenAccount } = await setupUser(
+      svm,
+      provider,
+      mint,
+      admin,
+      USER_STARTING_BALANCE
+    );
+
+    const lockPositionPda = await lockTokens(
+      program,
+      user,
+      vaultPda,
+      vaultTokenAccount,
+      userTokenAccount,
+      mint,
+      DEFAULT_BRONZE
+    );
+    const positionAfterLock = await program.account.lockPosition.fetch(
+      lockPositionPda
+    );
+
+    // Warp past lock_end and unlock. Position is retired but the PDA lives on.
+    warpTo(svm, BigInt(positionAfterLock.lockEnd.toNumber()));
+    await unlockTokens(
+      program,
+      user,
+      vaultPda,
+      vaultTokenAccount,
+      userTokenAccount,
+      mint
+    );
+    svm.expireBlockhash();
+
+    const positionAfterUnlock = await program.account.lockPosition.fetch(
+      lockPositionPda
+    );
+    assert.strictEqual(
+      positionAfterUnlock.isActive,
+      false,
+      "position retired — is_active is false"
+    );
+
+    // Try to lock again. `init` on the PDA must fail because the account
+    // already exists. We don't pin the exact error string (Anchor phrases
+    // account-already-in-use slightly differently across minor versions);
+    // what matters is that the call rejects and leaves the retired
+    // position byte-identical to its post-unlock state.
+    let rejectedAsExpected = false;
+    try {
+      await lockTokens(
+        program,
+        user,
+        vaultPda,
+        vaultTokenAccount,
+        userTokenAccount,
+        mint,
+        DEFAULT_BRONZE
+      );
+    } catch (err) {
+      rejectedAsExpected = true;
+    }
+    assert.ok(
+      rejectedAsExpected,
+      "lock must reject: the LockPosition PDA for this (vault, user) already exists from the prior lock"
+    );
+
+    // Retired position survives the failed re-lock — discount_end, tier,
+    // cycle_duration all unchanged from the post-unlock snapshot. Matcher
+    // behavior depends on these staying intact until discount_end elapses.
+    const positionAfterFailedRelock =
+      await program.account.lockPosition.fetch(lockPositionPda);
+    assert.strictEqual(
+      positionAfterFailedRelock.isActive,
+      false,
+      "position still retired"
+    );
+    assert.strictEqual(
+      positionAfterFailedRelock.amount.toNumber(),
+      0,
+      "position amount still zero"
+    );
+    assert.strictEqual(
+      positionAfterFailedRelock.discountEnd.toNumber(),
+      positionAfterUnlock.discountEnd.toNumber(),
+      "discount_end preserved through the failed re-lock attempt"
+    );
+    assert.deepStrictEqual(
+      positionAfterFailedRelock.tier,
+      positionAfterUnlock.tier,
+      "tier preserved through the failed re-lock attempt"
+    );
+    assert.strictEqual(
+      positionAfterFailedRelock.cycleDuration.toNumber(),
+      positionAfterUnlock.cycleDuration.toNumber(),
+      "cycle_duration preserved"
+    );
+  });
 });
