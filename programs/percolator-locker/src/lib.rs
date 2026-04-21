@@ -11,6 +11,10 @@ pub use instructions::refresh_lock::*;
 pub use instructions::unlock::*;
 pub use instructions::update_config::*;
 
+pub use constants::*;
+pub use error::*;
+pub use state::*;
+
 declare_id!("91JU1rmiLAPNcmC9Kew8cCXTRGFW1Pe67ZreijUia5S8");
 
 #[program]
