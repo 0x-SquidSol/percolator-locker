@@ -53,11 +53,21 @@ The canonical vault pubkey will be published in this README alongside the mainne
 
 ## Build & Test
 
-Requires [Anchor](https://www.anchor-lang.com/) and [Solana CLI](https://docs.solanalabs.com/cli/install).
+Requires [Anchor](https://www.anchor-lang.com/) 0.31.1 and [Solana CLI](https://docs.solanalabs.com/cli/install). `anchor-lang` and `anchor-spl` are pinned to exact `0.31.1` in `programs/percolator-locker/Cargo.toml`.
+
+Node must be reachable from Anchor's subprocess. On WSL, install a native Linux Node via `nvm` — a Windows `node.exe` surfaced through PATH interop will not work.
 
 ```bash
 anchor build
 anchor test
+```
+
+`anchor test` spins up a local validator and runs the full Mocha suite under `tests/`, which mixes validator-backed integration tests with in-process LiteSVM tests.
+
+Rust unit tests (e.g. `Tier::discount_bps` in `state.rs`) are separate:
+
+```bash
+cargo test --manifest-path programs/percolator-locker/Cargo.toml
 ```
 
 ## Ecosystem
