@@ -27,7 +27,7 @@ Every 30-day lock earns you 30 days of trading fee discount. The discount is alw
 2. Choose how many tokens to lock
 3. Tokens are transferred to the program's vault and locked for 30 days
 4. After 30 days, your discount activates and your tokens stay in the vault — refresh before your earned discount runs out to extend it another cycle (no tokens move on refresh)
-5. If you don't refresh in time, your earned discount still runs for 30 more days, then lapses
+5. If you don't refresh in time, your earned discount still runs for 30 more days, then lapses — once it lapses, refresh is no longer available; unlocking is the only way to retrieve your tokens, and doing so retires the position (see step 7)
 6. Withdraw your tokens by unlocking once the 30-day cycle has elapsed — tokens don't return automatically
 7. One lock per wallet per vault — after unlocking, that wallet's position for this vault is retired.
 
@@ -38,7 +38,7 @@ The vault has an admin key that can adjust the three tier thresholds and the loc
 - **Existing locks are immune.** When you lock, your tier and your cycle length are recorded on your position at that moment. Later changes to the vault's tier thresholds or lock duration do not retroactively re-classify your tier, extend your lock, or change when your earned discount ends. Admin changes only apply to locks opened after the change lands.
 - **Changes are rate-limited.** The admin must wait at least 7 days between successful config updates on the vault.
 - **Each change is bounded.** In any single update, no parameter (any of the three tier thresholds or the lock duration) can move by more than 50% of its current value. Reaching a very different value takes multiple updates spaced across multiple cooldown windows, giving users and integrators time to observe and react.
-- **Ordering is preserved.** Bronze must remain below Silver, which must remain below Gold, and the lock duration stays within the program's allowed range.
+- **Ordering is preserved.** Bronze must remain below Silver, which must remain below Gold, and the lock duration stays within the program's allowed range (1 day to 1 year).
 
 The vault's custody fields (token mint, vault token account, admin pubkey, locker count, total locked) are never touched by a configuration update.
 
