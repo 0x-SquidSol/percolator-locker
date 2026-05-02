@@ -138,9 +138,18 @@ pub struct Lock<'info> {
     )]
     pub vault: Account<'info, LockVault>,
 
-    /// The user's lock position — init for first-ever lock (re-lock after unlock is a
-    /// separate instruction that uses mut + is_active == false guard, by design to avoid
-    /// init_if_needed)
+    /// The user's lock position — `init` for the first-ever lock by this user
+    /// against this vault. The PDA is seeded by `(vault, user)` and `unlock`
+    /// deliberately does NOT close it (the matcher keeps reading `tier` and
+    /// `discount_end` past unlock until the earned-discount window elapses), so
+    /// the PDA persists for the life of the vault. As a direct consequence,
+    /// re-locking is not supported: once a wallet has locked in a given vault,
+    /// the `init` here will fail on every subsequent `lock` call by that wallet
+    /// with `account already in use`. This is the documented one-shot design
+    /// (see README's "How It Works") and is pinned by the
+    /// `cannot re-lock after unlock` litesvm-lifecycle test — switching to
+    /// `init_if_needed` (or adding a `close_position` instruction without care)
+    /// would silently let a user overwrite their just-earned discount_end.
     #[account(
         init,
         payer = user,
